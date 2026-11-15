@@ -48,7 +48,10 @@ object OutboundBuilder {
                 stream?.let { put("streamSettings", it) }
             }
         }
-        val useMux = muxEnabled && profile.type != ProfileType.WIREGUARD && profile.type != ProfileType.HYSTERIA2
+        val useMux = muxEnabled &&
+            profile.type != ProfileType.WIREGUARD &&
+            profile.type != ProfileType.HYSTERIA2 &&
+            !profile.flow.contains("vision", ignoreCase = true)
         put(
             "mux",
             buildJsonObject {
