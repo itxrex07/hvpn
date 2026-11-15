@@ -47,6 +47,13 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Accept Android SDK licenses
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          if [ -n "$SDK_ROOT" ] && [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          fi
+
       - name: Sync monotonic build number with existing tags
         id: prebuild
         shell: bash
@@ -69,22 +76,35 @@ jobs:
 
       - name: Prepare Android signing keystores
         env:
-          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
-          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 || secrets.KEYSTORE_BASE64 }}
+          STORE_PASS: ${{ secrets.RELEASE_STORE_PASSWORD || secrets.STORE_PASSWORD }}
+          KEY_ALIAS_VAL: ${{ secrets.RELEASE_KEY_ALIAS || secrets.KEY_ALIAS || 'upload' }}
+          KEY_PASS: ${{ secrets.RELEASE_KEY_PASSWORD || secrets.KEY_PASSWORD }}
         run: |
-          if [ -f debug.keystore.base64 ] && [ ! -f debug.keystore ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
+          if [ ! -s "debug.keystore" ] && [ -f "debug.keystore.base64" ]; then
+            tr -d '\r\n ' < debug.keystore.base64 | base64 --decode > debug.keystore || rm -f debug.keystore
           fi
 
-          if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$RELEASE_STORE_PASSWORD" ] && [ -n "$RELEASE_KEY_ALIAS" ] && [ -n "$RELEASE_KEY_PASSWORD" ]; then
-            echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > release.keystore
+          if [ ! -s "debug.keystore" ]; then
+            echo "::notice::debug.keystore not found; generating debug.keystore for debugConfig."
+            keytool -genkeypair -noprompt -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$STORE_PASS" ] && [ -n "$KEY_PASS" ]; then
+            printf '%s' "$KEYSTORE_B64" | tr -d '\r\n ' | base64 --decode > release.keystore
             printf "storeFile=release.keystore\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n" \
-              "$RELEASE_STORE_PASSWORD" "$RELEASE_KEY_ALIAS" "$RELEASE_KEY_PASSWORD" > keystore.properties
+              "$STORE_PASS" "$KEY_ALIAS_VAL" "$KEY_PASS" > keystore.properties
             echo "signing_mode=release" >> "$GITHUB_ENV"
           else
-            echo "::notice::RELEASE_KEYSTORE_BASE64 secrets not set; signing release APKs with debug.keystore fallback."
+            echo "::notice::Release keystore secrets not set; signing release APKs with debug.keystore."
             echo "signing_mode=debugConfig" >> "$GITHUB_ENV"
           fi
 
@@ -92,7 +112,7 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build release APKs
-        run: ./gradlew :app:assembleRelease --no-daemon
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
       - name: Resolve version tag and prepare release assets
         id: version
@@ -139,6 +159,13 @@ jobs:
           echo "build_num=$BUILD_NUM" >> "$GITHUB_OUTPUT"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release APKs as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hollow-vpn-${{ steps.version.outputs.release_tag }}-apks
+          path: release-assets/*
+          if-no-files-found: error
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
