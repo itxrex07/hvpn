@@ -1,5 +1,11 @@
 package slop.miho.chumpy.ui.components
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import slop.miho.chumpy.R
 import android.content.res.Configuration
 import android.os.Handler
 import android.os.Looper
@@ -12,6 +18,25 @@ import androidx.compose.runtime.mutableStateOf
 import kotlin.math.abs
 
 open class ControllerActivity : ComponentActivity() {
+    private var pendingLocalNetwork: ((Boolean) -> Unit)? = null
+    private val localNetworkPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val pending = pendingLocalNetwork
+        pendingLocalNetwork = null
+        pending?.invoke(granted)
+    }
+
+    fun withLocalNetworkPermission(required: Boolean = false, action: () -> Unit) {
+        if (Build.VERSION.SDK_INT < 37 || checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED) {
+            action()
+        } else if (pendingLocalNetwork == null) {
+            pendingLocalNetwork = { granted ->
+                if (granted || !required) action()
+                else Toast.makeText(this, R.string.local_network_permission_required, Toast.LENGTH_LONG).show()
+            }
+            localNetworkPermission.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+        }
+    }
+
     val controllerMode by lazy {
         mutableStateOf(if (resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK ==
             Configuration.UI_MODE_TYPE_TELEVISION) InputMode.CONTROLLER else InputMode.TOUCH)

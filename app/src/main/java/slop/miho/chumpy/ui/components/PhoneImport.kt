@@ -1,5 +1,6 @@
 package slop.miho.chumpy.ui.components
 
+import androidx.activity.compose.LocalActivity
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -57,6 +58,7 @@ fun PhoneImportAction(initialFocus: Boolean = false, wallpaper: Boolean = false,
     val television = LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     if (!television || !slop.miho.chumpy.ui.wallpapers.LocalPageOnStage.current) return
+    val activity = LocalActivity.current as? ControllerActivity
     var open by remember { mutableStateOf(false) }
     val requester = remember { FocusRequester() }
     LaunchedEffect(initialFocus, television) {
@@ -65,7 +67,9 @@ fun PhoneImportAction(initialFocus: Boolean = false, wallpaper: Boolean = false,
             requester.requestFocus()
         }
     }
-    TextButton(onClick = { open = true }, modifier = Modifier.focusRequester(requester)
+    TextButton(onClick = {
+        activity?.withLocalNetworkPermission(required = true) { open = true }
+    }, modifier = Modifier.focusRequester(requester)
         .focusRing(circular = true, inset = true, gap = 1.dp)) {
         Text(stringResource(if (wallpaper) R.string.phone_wallpaper_action else R.string.phone_import_action))
     }

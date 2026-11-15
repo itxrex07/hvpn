@@ -1,5 +1,7 @@
 package slop.miho.chumpy.sub
 
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+
 /**
  * The metadata panels attach to a subscription response — Hiddify's dialect, which is the
  * de-facto standard: traffic counters in `subscription-userinfo`, the display name in
@@ -18,9 +20,53 @@ data class SubscriptionMetadata(
     val geodataSources: String = "",
     /** The panel's `profile-logo`: a URL the card's avatar is downloaded from. */
     val logoUrl: String? = null,
+    val supportUrl: String? = null,
+    val webPageUrl: String? = null,
+    val announcement: String? = null,
 )
 
 object SubscriptionHeaders {
+    private val bodyKeys = setOf(
+        "subscription-userinfo", "profile-title", "profile-update-interval",
+        "routing", "profile-logo", "support-url", "profile-web-page-url", "announce",
+    )
+
+    internal fun bodyParameter(line: String): Pair<String, String>? {
+        val comment = line.trimStart()
+        if (!comment.startsWith('#')) return null
+        val separator = comment.indexOf(':')
+        if (separator < 0) return null
+        val key = comment.substring(1, separator).trim().lowercase()
+        if (key !in bodyKeys) return null
+        return key to comment.substring(separator + 1).trim()
+    }
+
+    internal fun parseResponse(headers: Map<String, List<String>>, text: String): SubscriptionMetadata {
+        val parameters = mutableMapOf<String, List<String>>()
+        text.lineSequence().forEach { line ->
+            bodyParameter(line)?.let { (key, value) ->
+                if (value.isNotBlank()) parameters.putIfAbsent(key, listOf(value))
+            }
+        }
+        headers.forEach { (key, values) ->
+            if (values.firstOrNull()?.isNotBlank() == true) parameters[key.lowercase()] = values
+        }
+        return parse(parameters)
+    }
+
+    internal fun webUrl(value: String): String? {
+        val url = value.trim().takeIf { it.length <= 8192 }?.toHttpUrlOrNull() ?: return null
+        return url.takeIf { it.username.isEmpty() && it.password.isEmpty() }?.toString()
+    }
+
+    private fun announcement(value: String): String? {
+        val trimmed = value.trim()
+        val text = if (trimmed.startsWith("base64:", ignoreCase = true)) {
+            LinkUtils.decodeBase64(trimmed.substringAfter(':')) ?: return null
+        } else trimmed
+        return text.trim().take(4096).takeIf { it.isNotBlank() }
+    }
+
     /** Parses the interesting headers out of a response's header map. */
     fun parse(headers: Map<String, List<String>>): SubscriptionMetadata {
         fun first(name: String): String? = headers.entries
@@ -42,7 +88,11 @@ object SubscriptionHeaders {
         first("profile-update-interval")?.let { parseUpdateInterval(it)?.let { h -> meta = meta.copy(updateIntervalHours = h) } }
         first("routing")?.let { meta = meta.copy(geodataSources = GeodataSources.fromHappHeader(it)) }
         first("profile-logo")?.let { meta = meta.copy(logoUrl = it) }
-        return meta
+        return meta.copy(
+            supportUrl = first("support-url")?.let(::webUrl),
+            webPageUrl = first("profile-web-page-url")?.let(::webUrl),
+            announcement = first("announce")?.let(::announcement),
+        )
     }
 
     /** "upload=123; download=456; total=789; expire=1700000000" → its four numbers. */

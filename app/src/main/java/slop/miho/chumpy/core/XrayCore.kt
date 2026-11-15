@@ -4,14 +4,14 @@ import android.content.Context
 import android.os.RemoteCallbackList
 import android.os.RemoteException
 import android.os.SystemClock
-import android.provider.Settings
 import android.util.Log
 import go.Seq
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
 import libv2ray.Libv2ray
 import java.io.File
-import java.security.MessageDigest
+import java.security.SecureRandom
+import androidx.core.content.edit
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -188,17 +188,14 @@ object XrayCore {
 
     private fun assetsDir(): File = File(appContext.filesDir, ASSET_DIR)
 
-    /**
-     * A stable per-device id for Xray's XUDP base key, as v2rayNG does — a salted hash of
-     * ANDROID_ID, never the raw identifier. The core decodes this as base64url and demands
-     * exactly 32 bytes out of it (hex strings decode to a multiple of 3 and are rejected),
-     * so the digest itself is what gets encoded, unpadded.
-     */
     private fun deviceId(): String {
-        val androidId = Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID)
-            ?: "chumpy"
-        val digest = MessageDigest.getInstance("SHA-256").digest("chumpy:$androidId".toByteArray())
-        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
+        val prefs = appContext.getSharedPreferences("xray_identity", Context.MODE_PRIVATE)
+        return prefs.getString("xudp_key", null) ?: run {
+            val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+            val key = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+            prefs.edit { putString("xudp_key", key) }
+            key
+        }
     }
 
     /**

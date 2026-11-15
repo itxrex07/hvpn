@@ -23,8 +23,9 @@ object Graph {
 
     fun init(context: Context) {
         if (::database.isInitialized) return
+        val application = context.applicationContext
         database = Room.databaseBuilder(
-            context.applicationContext,
+            application,
             ChumpyDatabase::class.java,
             ChumpyDatabase.NAME,
         ).addMigrations(
@@ -38,9 +39,11 @@ object Graph {
             ChumpyDatabase.MIGRATION_8_9,
             ChumpyDatabase.MIGRATION_9_10,
             ChumpyDatabase.MIGRATION_10_11,
+            ChumpyDatabase.MIGRATION_11_12,
+            ChumpyDatabase.MIGRATION_12_13,
         ).build()
         subscriptions = SubscriptionRepository(
-            context = context.applicationContext,
+            context = application,
             db = database,
             // Read lazily, at fetch time: by then the app object has long since bound the
             // shared tunnel link. Fetches route through the loopback socks inbound whenever
@@ -52,7 +55,7 @@ object Graph {
             // fingerprint follows the toggle the moment it flips, and every fetch —
             // manual or background, first hop or nested — dresses up the same way.
             happSpoof = {
-                SettingsStore.settings(context.applicationContext).value.happFingerprint()
+                SettingsStore.settings(application).value.happFingerprint()
             },
         )
     }

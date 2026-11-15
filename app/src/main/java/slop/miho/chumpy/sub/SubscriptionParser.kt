@@ -13,7 +13,7 @@ import slop.miho.chumpy.db.computeLinkKey
 object SubscriptionParser {
     /** The parsed profiles, deduplicated, in body order; empty when nothing parsed. */
     fun parse(body: String): List<ProfileEntity> {
-        val text = decodeBody(body)
+        val text = contentBody(body)
         // The raw-config dialect first: a config's own DNS block carries "https://"
         // addresses, which would otherwise read as a link list and swallow the body —
         // checked on the decoded text so base64-wrapped configs land here too.
@@ -33,15 +33,22 @@ object SubscriptionParser {
      * http(s) line that is not itself a proxy link.
      */
     fun isNestedSubscriptionUrl(body: String): String? {
-        val trimmed = decodeBody(body)
+        val trimmed = contentBody(body)
         if (trimmed.lines().count { it.isNotBlank() } != 1) return null
         if (!trimmed.startsWith("http://", ignoreCase = true) && !trimmed.startsWith("https://", ignoreCase = true)) return null
         return trimmed
     }
 
-    private fun decodeBody(body: String): String {
+    private fun contentBody(body: String): String {
+        val decoded = decodeBody(body)
+        return decoded.lineSequence()
+            .filter { SubscriptionHeaders.bodyParameter(it) == null }
+            .joinToString("\n").trim()
+    }
+
+    internal fun decodeBody(body: String): String {
         val trimmed = body.trim().removePrefix("\uFEFF").trim()
-        if (trimmed.startsWith("{") || trimmed.startsWith("[") ||
+        if (trimmed.startsWith("#") || trimmed.startsWith("{") || trimmed.startsWith("[") ||
             Regex("(?m)^proxies:").containsMatchIn(trimmed)) return trimmed
         // Plain link lists announce themselves; base64 bodies don't.
         if (trimmed.contains("://")) return trimmed

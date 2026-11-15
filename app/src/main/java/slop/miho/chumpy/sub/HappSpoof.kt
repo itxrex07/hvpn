@@ -1,6 +1,7 @@
 package slop.miho.chumpy.sub
 
 import android.os.Build
+import slop.miho.chumpy.BuildConfig
 import slop.miho.chumpy.data.UiSettings
 import java.net.HttpURLConnection
 import java.security.SecureRandom
@@ -76,11 +77,11 @@ object HappSpoof {
     }
 
     /**
-     * Dresses the connection up as the Happ client: the UA carries the version, OS and
-     * user id; the x- headers carry the rest of the fingerprint.
+     * Keeps the configured Happ version and platform in the User-Agent, identifies
+     * Chumpy and its build version, and ends with the existing client identifier.
      */
     fun headers(fingerprint: Fingerprint): Map<String, String> = mapOf(
-        "User-Agent" to "Happ/${fingerprint.appVersion}/${fingerprint.os}/${fingerprint.userId}",
+        "User-Agent" to "Happ/${fingerprint.appVersion}/${fingerprint.os}/Chumpy/${BuildConfig.VERSION_NAME}/${fingerprint.userId}",
         "x-device-locale" to fingerprint.locale,
         "x-hwid" to fingerprint.hwid,
         "x-device-os" to fingerprint.os,

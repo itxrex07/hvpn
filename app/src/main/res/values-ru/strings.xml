@@ -130,7 +130,6 @@
     <string name="settings_accent_rainbow">Радужный</string>
     <string name="settings_accent_custom">Свой</string>
     <string name="settings_accent_custom_title">Свой цвет</string>
-    <string name="settings_accent_custom_hex">HEX-цвет</string>
     <string name="settings_accent_custom_pick">Выбрать</string>
     <string name="settings_slow_animations">Медленные анимации</string>
     <string name="settings_slow_animations_hint">Движения становятся плавнее, слегка пружинее</string>
@@ -187,7 +186,12 @@
     <string name="connection_bypass_lan_on">Локальный трафик идёт мимо VPN, как будто его нет</string>
     <string name="connection_bypass_lan_off">Всё идёт через туннель, включая локалку</string>
     <string name="settings_background_refresh">Фоновое обновление</string>
-    <string name="settings_background_refresh_count">Автообновление подписок: %d</string>
+    <plurals name="settings_background_refresh_count">
+        <item quantity="one">Автообновление %d подписки</item>
+        <item quantity="few">Автообновление %d подписок</item>
+        <item quantity="many">Автообновление %d подписок</item>
+        <item quantity="other">Автообновление %d подписки</item>
+    </plurals>
     <string name="settings_about_core">Ядро Xray</string>
     <string name="settings_about_core_running">работает</string>
     <string name="settings_about_core_not_running">остановлено</string>
@@ -317,4 +321,11 @@
     <string name="error_geodata_source_missing">В базе %1$s нет категорий %2$s, а подписка не указала адрес их загрузки. Обновите подписку или запросите базу у провайдера.</string>
     <string name="error_geodata_categories">База провайдера не содержит нужных категорий: %1$s.</string>
     <string name="error_geodata_download">Не удалось подготовить базу маршрутизации подписки: %1$s</string>
+    <string name="per_app_search">Поиск приложений</string>
+    <string name="per_app_search_empty">Приложения не найдены</string>
+    <string name="subscription_link_title">Добавить подписку?</string>
+    <string name="local_network_permission_required">Разрешите доступ к устройствам поблизости, чтобы принимать файлы с телефона.</string>
+    <string name="subscription_support">Поддержка</string>
+    <string name="subscription_website">Сайт подписки</string>
+    <string name="server_ping_action">Проверить пинг сервера</string>
 </resources>

@@ -54,6 +54,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -209,10 +210,10 @@ fun FloatingBottomBar(
     selectedCategory: SettingsCategory,
     onCategorySelected: (SettingsCategory) -> Unit,
     backdrop: GraphicsLayer?,
+    modifier: Modifier = Modifier,
     /** Where the controller's summons land on the bar's two faces: the picked pill of each. */
     tabFocusRequester: FocusRequester? = null,
     categoryFocusRequester: FocusRequester? = null,
-    modifier: Modifier = Modifier,
 ) {
     val motion = MaterialTheme.motionScheme
     // The classic bar stands in for the pills when picked (or, unpicked, on small screens);
@@ -639,8 +640,8 @@ private fun AnimatedContentTransitionScope<Boolean>.morph(motion: MotionScheme):
 @Composable
 private fun BarSurface(
     backdrop: GraphicsLayer?,
-    floating: Boolean = true,
     modifier: Modifier = Modifier,
+    floating: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val barShape = if (floating) CircleShape else RectangleShape
@@ -715,8 +716,8 @@ private fun BarSurface(
     // The gradient's reach past the bar's own bounds, in the root's terms: how far the
     // window stretches to the left and the right of the surface. The classic bar's paint
     // reads these alone — see the overreach below.
-    var gradientLeft by remember { mutableStateOf(0f) }
-    var gradientRight by remember { mutableStateOf(0f) }
+    var gradientLeft by remember { mutableFloatStateOf(0f) }
+    var gradientRight by remember { mutableFloatStateOf(0f) }
     // The tint the pills inside should wear: the glass's density while the frost is up, the
     // plain surface opacity while it's down, blended through the frost's own fade so the
     // selection indicator never pops. Handed down as readers, for the pills' draw blocks.
@@ -919,6 +920,7 @@ private fun RoundBarButton(
     icon: Int,
     contentDescription: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     iconModifier: Modifier = Modifier,
 ) {
     // No press ripple: the morph into the other shape is already the button's whole
@@ -926,7 +928,7 @@ private fun RoundBarButton(
     val interactionSource = remember { MutableInteractionSource() }
     val tap = greedyTap(onClick)
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(BarHeight)
             // The ring rides inset: the bar's frost surface clips its content to its
             // own circle, and a ring drawn past the button's edge would be cut down

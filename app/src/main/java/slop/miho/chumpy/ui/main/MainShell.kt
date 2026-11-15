@@ -1,6 +1,7 @@
 package slop.miho.chumpy.ui.main
 
-import android.app.Activity
+import androidx.activity.compose.LocalActivity
+import slop.miho.chumpy.ui.components.ControllerActivity
 import android.net.VpnService
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
@@ -142,10 +143,10 @@ fun MainShell(viewModel: MainViewModel) {
     val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
     val selectedSubscription by viewModel.selectedSubscription.collectAsStateWithLifecycle()
     val servers by viewModel.servers.collectAsStateWithLifecycle()
-    val home by viewModel.home.collectAsStateWithLifecycle()
     val update by viewModel.update.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
 
+    val activity = LocalActivity.current as? ControllerActivity
     val context = LocalContext.current
     val vpnPermission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) viewModel.connect()
@@ -170,7 +171,7 @@ fun MainShell(viewModel: MainViewModel) {
     // strip hands its land back. A finger on the glass brings the bar up again, as it
     // brings everything else back.
     LaunchedEffect(controller) {
-        val window = (context as? Activity)?.window ?: return@LaunchedEffect
+        val window = activity?.window ?: return@LaunchedEffect
         val insets = WindowCompat.getInsetsController(window, window.decorView)
         if (controller) {
             insets.systemBarsBehavior =
@@ -256,8 +257,10 @@ fun MainShell(viewModel: MainViewModel) {
 
     // The connect ask rides the VPN permission the same way whichever pane asks for it.
     val connectWithConsent: () -> Unit = {
-        val consent = VpnService.prepare(context)
-        if (consent != null) vpnPermission.launch(consent) else viewModel.connect()
+        activity?.withLocalNetworkPermission {
+            val consent = VpnService.prepare(context)
+            if (consent != null) vpnPermission.launch(consent) else viewModel.connect()
+        }
     }
 
     // The settings pages' shared scroll state, owned above either layout — the pager
@@ -396,7 +399,7 @@ fun MainShell(viewModel: MainViewModel) {
             ) {
             wallpaper?.let { decoded ->
                 WallpaperBackdrop(
-                    image = decoded.image,
+                    wallpaper = decoded,
                     scale = { scale.value * (1f + arrivalReach * (1f - arrival.value)) },
                     blur = { blur.value },
                     scrim = scrim,
@@ -423,7 +426,7 @@ fun MainShell(viewModel: MainViewModel) {
                     subscriptions = subscriptions,
                     selectedSubscription = selectedSubscription,
                     servers = servers,
-                    home = home,
+                    homeFlow = viewModel.home,
                     update = update,
                     statsFlow = viewModel.stats,
                     manualProfileCount = viewModel.manualProfileCount,
@@ -457,9 +460,14 @@ fun MainShell(viewModel: MainViewModel) {
                     },
                     onRefreshPing = viewModel::refreshPing,
                     onPingServers = viewModel::pingServers,
+                    onPingServer = viewModel::pingServer,
                     onUpdateSubscription = viewModel::updateSelectedSubscription,
                     onSelectSubscription = viewModel::selectSubscription,
-                    onAddSubscription = viewModel::addSubscription,
+                    onAddSubscription = { url, name, done ->
+                        activity?.withLocalNetworkPermission {
+                            viewModel.addSubscription(url, name, done)
+                        }
+                    },
                     onDeleteSubscription = viewModel::deleteSubscription,
                     onDeleteManualProfile = viewModel::deleteManualProfile,
                     onTogglePinned = viewModel::toggleProfilePinned,
@@ -482,7 +490,7 @@ fun MainShell(viewModel: MainViewModel) {
                     selectedSubscription = selectedSubscription,
                     tunnelStatus = tunnelStatus,
                     servers = servers,
-                    home = home,
+                    homeFlow = viewModel.home,
                     update = update,
                     // The flow itself, not its value: it ticks once a second, and the STATS page
                     // collects it in its own branch rather than recomposing the whole shell.
@@ -522,9 +530,14 @@ fun MainShell(viewModel: MainViewModel) {
                     },
                     onRefreshPing = viewModel::refreshPing,
                     onPingServers = viewModel::pingServers,
+                    onPingServer = viewModel::pingServer,
                     onUpdateSubscription = viewModel::updateSelectedSubscription,
                     onSelectSubscription = viewModel::selectSubscription,
-                    onAddSubscription = viewModel::addSubscription,
+                    onAddSubscription = { url, name, done ->
+                        activity?.withLocalNetworkPermission {
+                            viewModel.addSubscription(url, name, done)
+                        }
+                    },
                     onDeleteSubscription = viewModel::deleteSubscription,
                     onDeleteManualProfile = viewModel::deleteManualProfile,
                     onTogglePinned = viewModel::toggleProfilePinned,
@@ -711,7 +724,7 @@ private fun ShellDestinationPage(
     subscriptions: List<slop.miho.chumpy.db.SubscriptionEntity>,
     selectedSubscription: slop.miho.chumpy.db.SubscriptionEntity?,
     servers: ServersUiState,
-    home: HomeUiState,
+    homeFlow: StateFlow<HomeUiState>,
     update: UpdateUiState,
     statsFlow: StateFlow<StatsUiState>,
     manualProfileCount: StateFlow<Int>,
@@ -729,6 +742,7 @@ private fun ShellDestinationPage(
     onCheckForUpdate: () -> Unit,
     onRefreshPing: (showPending: Boolean) -> Unit,
     onPingServers: () -> Unit,
+    onPingServer: (String) -> Unit,
     onUpdateSubscription: () -> Unit,
     onSelectSubscription: (String) -> Unit,
     onAddSubscription: (url: String, name: String?, onDone: (String?) -> Unit) -> Unit,
@@ -747,7 +761,7 @@ private fun ShellDestinationPage(
         when (val tab = MainTab.entries[position]) {
             MainTab.HOME -> HomeScreen(
                 status = tunnelStatus,
-                home = home,
+                home = homeFlow.collectOnStageAsState().value,
                 update = update,
                 visible = homeVisible,
                 onRefreshPing = onRefreshPing,
@@ -763,15 +777,16 @@ private fun ShellDestinationPage(
                 // here: the flow itself ticks once a second, while the week
                 // changes only on a flush — so only the page recomposes then.
                 val onStage = LocalPageOnStage.current
+                val initialWeek = remember(statsFlow, onStage) { statsFlow.value.week }
                 val weekFlow = remember(statsFlow, onStage) {
                     if (onStage) statsFlow.map { it.week }.distinctUntilChanged()
-                    else kotlinx.coroutines.flow.flowOf(statsFlow.value.week)
+                    else kotlinx.coroutines.flow.flowOf(initialWeek)
                 }
                 val week by weekFlow
                     // Seeded with the flow's own current value: an empty-list placeholder
                     // would recompose the whole page a frame later, when the real week
                     // arrives — the page would compose twice on every open.
-                    .collectAsStateWithLifecycle(initialValue = statsFlow.value.week)
+                    .collectAsStateWithLifecycle(initialValue = initialWeek)
                 val manualCount by manualProfileCount.collectOnStageAsState()
                 ServersScreen(
                     subscriptions = subscriptions,
@@ -783,6 +798,7 @@ private fun ShellDestinationPage(
                     tunnelUp = tunnelStatus.state == TunnelState.UP,
                     onUpdate = onUpdateSubscription,
                     onPing = onPingServers,
+                    onPingServer = onPingServer,
                     onSelectSubscription = onSelectSubscription,
                     onAddSubscription = onAddSubscription,
                     onDeleteSubscription = onDeleteSubscription,
@@ -852,7 +868,7 @@ private fun TwoPaneShell(
     subscriptions: List<slop.miho.chumpy.db.SubscriptionEntity>,
     selectedSubscription: slop.miho.chumpy.db.SubscriptionEntity?,
     servers: ServersUiState,
-    home: HomeUiState,
+    homeFlow: StateFlow<HomeUiState>,
     update: UpdateUiState,
     statsFlow: StateFlow<StatsUiState>,
     manualProfileCount: StateFlow<Int>,
@@ -871,6 +887,7 @@ private fun TwoPaneShell(
     onSelectPage: (Int) -> Unit,
     onRefreshPing: (showPending: Boolean) -> Unit,
     onPingServers: () -> Unit,
+    onPingServer: (String) -> Unit,
     onUpdateSubscription: () -> Unit,
     onSelectSubscription: (String) -> Unit,
     onAddSubscription: (url: String, name: String?, onDone: (String?) -> Unit) -> Unit,
@@ -906,7 +923,7 @@ private fun TwoPaneShell(
             CompositionLocalProvider(LocalBarReservedHeight provides FloatingBottomBarReservedHeight) {
                 HomeScreen(
                     status = tunnelStatus,
-                    home = home,
+                    home = homeFlow.collectAsStateWithLifecycle().value,
                     update = update,
                     visible = true,
                     onRefreshPing = onRefreshPing,
@@ -943,7 +960,7 @@ private fun TwoPaneShell(
                     selectedSubscription = selectedSubscription,
                     tunnelStatus = tunnelStatus,
                     servers = servers,
-                    home = home,
+                    homeFlow = homeFlow,
                     update = update,
                     statsFlow = statsFlow,
                     manualProfileCount = manualProfileCount,
@@ -962,6 +979,7 @@ private fun TwoPaneShell(
                     onSelectPage = onSelectPage,
                     onRefreshPing = onRefreshPing,
                     onPingServers = onPingServers,
+                    onPingServer = onPingServer,
                     onUpdateSubscription = onUpdateSubscription,
                     onSelectSubscription = onSelectSubscription,
                     onAddSubscription = onAddSubscription,
@@ -1024,7 +1042,7 @@ private fun MainPagerStrip(
     selectedSubscription: slop.miho.chumpy.db.SubscriptionEntity?,
     tunnelStatus: TunnelStatus,
     servers: ServersUiState,
-    home: HomeUiState,
+    homeFlow: StateFlow<HomeUiState>,
     update: UpdateUiState,
     statsFlow: StateFlow<StatsUiState>,
     manualProfileCount: StateFlow<Int>,
@@ -1043,6 +1061,7 @@ private fun MainPagerStrip(
     onSelectPage: (Int) -> Unit,
     onRefreshPing: (showPending: Boolean) -> Unit,
     onPingServers: () -> Unit,
+    onPingServer: (String) -> Unit,
     onUpdateSubscription: () -> Unit,
     onSelectSubscription: (String) -> Unit,
     onAddSubscription: (url: String, name: String?, onDone: (String?) -> Unit) -> Unit,
@@ -1151,7 +1170,7 @@ private fun MainPagerStrip(
                     subscriptions = subscriptions,
                     selectedSubscription = selectedSubscription,
                     servers = servers,
-                    home = home,
+                    homeFlow = homeFlow,
                     update = update,
                     statsFlow = statsFlow,
                     manualProfileCount = manualProfileCount,
@@ -1169,6 +1188,7 @@ private fun MainPagerStrip(
                     onCheckForUpdate = onCheckForUpdate,
                     onRefreshPing = onRefreshPing,
                     onPingServers = onPingServers,
+                    onPingServer = onPingServer,
                     onUpdateSubscription = onUpdateSubscription,
                     onSelectSubscription = onSelectSubscription,
                     onAddSubscription = onAddSubscription,

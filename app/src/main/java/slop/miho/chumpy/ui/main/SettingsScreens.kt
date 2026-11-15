@@ -1,5 +1,6 @@
 package slop.miho.chumpy.ui.main
 
+import androidx.core.net.toUri
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -1246,8 +1247,9 @@ fun ConnectionScreen(
                         BackgroundRefreshRow(
                             supporting = when {
                                 autoCount == 0 -> stringResource(R.string.per_app_disabled)
-                                else -> stringResource(
-                                    R.string.settings_background_refresh_count,
+                                else -> pluralStringResource(
+                                    R.plurals.settings_background_refresh_count,
+                                    autoCount,
                                     autoCount,
                                 )
                             },
@@ -1882,10 +1884,10 @@ private fun PlainRow(
 fun AboutScreen(
     coreVersion: String?,
     coreRunning: Boolean,
+    modifier: Modifier = Modifier,
     update: UpdateUiState = UpdateUiState(),
     onUpdateChipTap: () -> Unit = {},
     onCheckForUpdate: () -> Unit = {},
-    modifier: Modifier = Modifier,
 ) {
     val scrollState = rememberScrollState()
     val contentUnderBar by remember(scrollState) {
@@ -2087,7 +2089,7 @@ private fun ExternalLinkRow(
         supporting = supporting,
         icon = icon,
     ) {
-        context.externalAction { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+        context.externalAction { context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }
     }
 }
 

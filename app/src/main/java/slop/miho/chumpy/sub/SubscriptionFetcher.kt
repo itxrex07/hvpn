@@ -1,5 +1,6 @@
 package slop.miho.chumpy.sub
 
+import androidx.core.net.toUri
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -95,7 +96,8 @@ class SubscriptionFetcher(
                             .use { stream -> stream.readNBytesCompat(MAX_BODY_BYTES) }
                         val body = String(bytes, Charsets.UTF_8)
                         if (body.isBlank()) throw IOException("Empty subscription body")
-                        FetchResult(body, SubscriptionHeaders.parse(it.headers.toMultimap()))
+                        val decoded = SubscriptionParser.decodeBody(body)
+                        FetchResult(decoded, SubscriptionHeaders.parseResponse(it.headers.toMultimap(), decoded))
                     }
                     if (continuation.isActive) continuation.resume(result)
                 } catch (e: Exception) {
@@ -215,7 +217,7 @@ class SubscriptionFetcher(
 
     /** The link host of a subscription URL — the fallback display name. */
     fun hostNameOf(rawUrl: String): String = try {
-        Uri.parse(normalizeUrl(rawUrl)).host ?: rawUrl
+        normalizeUrl(rawUrl).toUri().host ?: rawUrl
     } catch (_: Exception) {
         rawUrl
     }

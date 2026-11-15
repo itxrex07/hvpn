@@ -1,6 +1,7 @@
 package slop.miho.chumpy.core
 
 import android.content.ComponentName
+import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
@@ -15,7 +16,8 @@ import kotlinx.coroutines.flow.asStateFlow
  * service commands (the VPN must be started, not merely bound); the binder carries status
  * callbacks, traffic counters and delay measurements.
  */
-class TunnelClient(private val context: Context) {
+class TunnelClient(context: Context) {
+    private val context: Application = context.applicationContext as Application
     private val _status = MutableStateFlow(TunnelStatus())
     val status: StateFlow<TunnelStatus> = _status.asStateFlow()
 

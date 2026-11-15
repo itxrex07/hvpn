@@ -1,5 +1,6 @@
 package slop.miho.chumpy.data
 
+import androidx.core.graphics.get
 import android.content.Context
 import android.graphics.BitmapFactory
 import androidx.core.graphics.ColorUtils
@@ -78,7 +79,7 @@ object WallpaperPalette {
             for (y in 0 until bitmap.height) {
                 currentCoroutineContext().ensureActive()
                 for (x in 0 until bitmap.width) {
-                    ColorUtils.colorToHSL(bitmap.getPixel(x, y), hsl)
+                    ColorUtils.colorToHSL(bitmap[x, y], hsl)
                     if (hsl[1] < 0.15f || hsl[2] < 0.15f || hsl[2] > 0.85f) continue
                     val bin = (hsl[0] / 360f * HUE_BINS).toInt().coerceIn(0, HUE_BINS - 1)
                     bins[bin] += hsl[1]

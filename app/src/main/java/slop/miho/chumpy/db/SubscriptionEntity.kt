@@ -56,4 +56,7 @@ data class SubscriptionEntity(
      * which never replace the row, only copy over it.
      */
     val pinned: Boolean = false,
+    val supportUrl: String? = null,
+    val webPageUrl: String? = null,
+    val announcement: String? = null,
 )

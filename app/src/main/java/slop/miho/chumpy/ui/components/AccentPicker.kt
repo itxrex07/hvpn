@@ -1,5 +1,6 @@
 package slop.miho.chumpy.ui.components
 
+import androidx.core.graphics.toColorInt
 import android.os.Build
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -581,7 +582,7 @@ private fun HexField(
             // Six well-formed hex digits make a color; anything less keeps the field as
             // a scratchpad until it is complete.
             if (cleaned.matches(Regex("[0-9a-fA-F]{6}"))) {
-                onColor(Color(android.graphics.Color.parseColor("#$cleaned")))
+                onColor(Color("#$cleaned".toColorInt()))
             }
         },
         textStyle = MaterialTheme.typography.bodyLarge.merge(

@@ -1,5 +1,6 @@
 package slop.miho.chumpy.core
 
+import androidx.core.graphics.createBitmap
 import android.app.PendingIntent
 import android.annotation.SuppressLint
 import android.content.Intent
@@ -79,7 +80,8 @@ class QuickTileService : TileService() {
             TunnelState.UP, TunnelState.CONNECTING -> ChumpyVpnService.startDisconnect(this)
             TunnelState.DISCONNECTING -> Unit
             else -> {
-                val needsSetup = !CoreConfigFile.has(this) || VpnService.prepare(this) != null
+                val needsSetup = !CoreConfigFile.has(this) || VpnService.prepare(this) != null ||
+                    (Build.VERSION.SDK_INT >= 37 && checkSelfPermission(android.Manifest.permission.ACCESS_LOCAL_NETWORK) != android.content.pm.PackageManager.PERMISSION_GRANTED)
                 if (needsSetup) {
                     // Missing config or VPN consent: hand over to the app once unlocked.
                     unlockAndRun {
@@ -151,7 +153,7 @@ class QuickTileService : TileService() {
         val drawable = getDrawable(R.drawable.ic_tile_inverted)!!.mutate()
         drawable.setTint(color)
         val size = 512
-        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(size, size)
         val canvas = Canvas(bitmap)
         drawable.setBounds(0, 0, size, size)
         drawable.draw(canvas)

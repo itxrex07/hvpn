@@ -1,5 +1,6 @@
 package slop.miho.chumpy.sub
 
+import androidx.core.content.edit
 import android.content.Context
 import android.os.Build
 import android.util.Log
@@ -289,21 +290,18 @@ object UpdatePrefs {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_HIDDEN_TAG, null)
 
     fun hideTag(context: Context, tag: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_HIDDEN_TAG, tag).apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putString(KEY_HIDDEN_TAG, tag) }
     }
 
     fun downloadedTag(context: Context): String? =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_DOWNLOADED_TAG, null)
 
     fun markDownloaded(context: Context, tag: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_DOWNLOADED_TAG, tag).apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putString(KEY_DOWNLOADED_TAG, tag) }
     }
 
     fun clearDownloaded(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .remove(KEY_DOWNLOADED_TAG).apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { remove(KEY_DOWNLOADED_TAG) }
     }
 
     /** Where an update's APK lands: the app's own files, under updates/, named by its tag. */

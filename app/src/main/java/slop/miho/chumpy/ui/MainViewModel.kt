@@ -1,5 +1,7 @@
 package slop.miho.chumpy.ui
 
+import androidx.core.content.edit
+import androidx.core.net.toUri
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
@@ -403,7 +405,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .setDataAndType(uri, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         val target = if (app.packageManager.canRequestPackageInstalls()) install
-        else Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${app.packageName}"))
+        else Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:${app.packageName}".toUri())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { app.startActivity(target) }
             .onFailure { Log.w("Chumpy/Update", "Install request failed", it) }
@@ -671,14 +673,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (lastSeen >= versionCode) return@launch
             val pending = repository.subscriptions().first()
             if (lastSeen == 0L && pending.isEmpty()) {
-                prefs.edit().putLong("version_code", versionCode).apply()
+                prefs.edit { putLong("version_code", versionCode) }
                 return@launch
             }
             var succeeded = true
             pending.forEach { subscription ->
                 if (repository.updateSubscription(subscription.id).isFailure) succeeded = false
             }
-            if (succeeded) prefs.edit().putLong("version_code", versionCode).apply()
+            if (succeeded) prefs.edit { putLong("version_code", versionCode) }
         }
     }
 
@@ -803,15 +805,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Selects a server: persists the choice and, if the tunnel is up, reloads the running
-     * core with the new profile in place — the interface stays, the session does not drop.
+     * Persists the selected server and reconnects the active VPN with its configuration.
      */
     fun selectProfile(id: String) {
-        if (_servers.value.selectedProfileId == id) return
+        val state = tunnelStatus.value.state
+        val reconnect = state == TunnelState.UP || state == TunnelState.CONNECTING
+        if (connection.value.selectedProfileId == id &&
+            (!reconnect || (state == TunnelState.UP && activeIdentity.value?.profile?.id == id))) return
         ConnectionStore.update(app) { it.copy(selectedProfileId = id) }
         // The pick is a use: the "last used" order remembers which hand the user played.
         viewModelScope.launch { repository.setProfileLastUsed(id, System.currentTimeMillis()) }
-        if (tunnelStatus.value.state in setOf(TunnelState.UP, TunnelState.CONNECTING)) {
+        if (reconnect) {
             applyConfigAndConnect(_servers.value.profiles.firstOrNull { it.id == id })
         }
     }
@@ -1061,20 +1065,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Measures the selected server's delay right now — the servers screen's selected row
-     * and Home's chip share the result. Returns null when there is nothing to measure.
-     */
-    fun pingSelected() {
-        val profile = selectedProfile.value ?: return
-        // A balancer is measured by living: the live loop reports the tunnel's own delay.
-        if (profile.type == ProfileType.BALANCER) return
-        viewModelScope.launch(Dispatchers.IO) {
-            val delay = tunnelClient.measureDelay(
-                XrayConfigBuilder.buildTest(profile),
-                connection.value.delayTestUrl,
-            )
-            repository.setProfileDelay(profile.id, delay, System.currentTimeMillis())
+    private val individualPings = mutableSetOf<String>()
+
+    fun pingServer(id: String) {
+        val profile = _servers.value.profiles.firstOrNull { it.id == id } ?: return
+        if (profile.type == ProfileType.BALANCER || !individualPings.add(id)) return
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    pingSemaphore.withPermit {
+                        val delay = tunnelClient.measureDelay(
+                            XrayConfigBuilder.buildTest(profile),
+                            connection.value.delayTestUrl,
+                        )
+                        repository.setProfileDelay(id, delay, System.currentTimeMillis())
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                Log.w("Chumpy/Ping", "Individual delay measurement failed")
+                repository.setProfileDelay(id, null, System.currentTimeMillis())
+            } finally {
+                individualPings.remove(id)
+            }
         }
     }
 

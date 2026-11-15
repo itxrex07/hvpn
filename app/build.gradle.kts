@@ -54,26 +54,11 @@ android {
         buildConfigField("String", "BUILD_DATE", "\"$buildDate\"")
     }
 
-    // One APK per phone architecture: the Xray core's native library is the app's whole
-    // weight, and carrying both 64- and 32-bit copies doubles it for every device that
-    // installs the wrong one. The builds are sideloaded, so the split is per file. The
-    // debug build runs on the phone in hand — its invocation carries no release task, so
-    // it splits into the 64-bit file only; a release invocation splits into all three —
-    // both arms plus the PC-side x86_64 for the emulators. No universal carry-along: it
-    // only re-bundles the same three cores at 3.5x the weight for whoever can't tell
-    // the machines apart, and the update checker picks the right file by itself now.
-    val releaseRequested = gradle.startParameter.taskNames.any { name ->
-        name.substringAfterLast(':').contains("Release", ignoreCase = true)
-    }
     splits {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a")
-            if (releaseRequested) {
-                include("armeabi-v7a")
-                include("x86_64")
-            }
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
         }
     }
 
@@ -129,10 +114,6 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 
-    // The debug build runs on the phone in hand — its 32-bit split is a wasted copy of
-    // the core: the splits above hand it the 64-bit file only when its invocation carries
-    // no release task (see there).
-
     // The gomobile runtime is loaded from the APK the classic way, like every Xray client.
     packaging {
         jniLibs {
@@ -163,6 +144,7 @@ dependencies {
     implementation(files("libs/libv2ray.aar"))
 
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.exifinterface)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

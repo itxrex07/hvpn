@@ -5,11 +5,3 @@
 
 # The subscription logos' SVG renderer; it reads its own classes reflectively.
 -keep class com.caverock.androidsvg.** { *; }
-
-# Room entities are reflected over by the compiler-generated code only; keep the
-# kotlinx-serialization core off the shrinker's blind spots.
--keepclassmembers class kotlinx.serialization.json.** { *** Companion; }
--keepclasseswithmembers class kotlinx.serialization.json.** { kotlinx.serialization.KSerializer serializer(...); }
--keep,includedescriptorclasses class slop.miho.aurora.xray.**$$serializer { *; }
--keepclassmembers class slop.miho.aurora.xray.** { *** Companion; }
--keepclasseswithmembers class slop.miho.aurora.xray.** { kotlinx.serialization.KSerializer serializer(...); }

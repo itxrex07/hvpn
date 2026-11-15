@@ -140,7 +140,7 @@ private fun ScannerScreen(
     LaunchedEffect(previewView, executor) {
         // Camera start-up is the one thing that can fail here (no camera, busy, buggy
         // provider); a failure leaves the viewfinder black with the close tile alive.
-        runCatching {
+        try {
             val provider = suspendCancellableCoroutine { cont ->
                 val future = ProcessCameraProvider.getInstance(context)
                 future.addListener({
@@ -161,13 +161,17 @@ private fun ScannerScreen(
                 val text = try { decoder.decode(frame) } finally { frame.close() }
                 if (text != null && reported.compareAndSet(false, true)) main.execute { onResult(text) }
             }
-            provider.unbindAll()
-            provider.bindToLifecycle(
-                owner,
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                preview,
-                analysis,
-            )
+            try {
+                provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
+                kotlinx.coroutines.awaitCancellation()
+            } finally {
+                analysis.clearAnalyzer()
+                provider.unbind(preview, analysis)
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            android.util.Log.w("Chumpy/Scanner", "Camera preview unavailable", failure)
         }
     }
 

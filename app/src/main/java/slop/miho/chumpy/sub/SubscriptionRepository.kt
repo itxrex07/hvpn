@@ -1,5 +1,6 @@
 package slop.miho.chumpy.sub
 
+import android.app.Application
 import android.content.Context
 import android.util.Log
 import androidx.room.withTransaction
@@ -37,11 +38,13 @@ import java.util.concurrent.TimeUnit
  * interval taken from the panel's `profile-update-interval` header when present.
  */
 class SubscriptionRepository(
-    private val context: Context,
+    context: Context,
     private val db: ChumpyDatabase,
     private val tunnelUp: () -> Boolean,
     private val happSpoof: () -> HappSpoof.Fingerprint?,
 ) {
+    private val context: Application = context.applicationContext as Application
+
     private companion object {
         const val TAG = "Chumpy/SubRepo"
         const val DEFAULT_UPDATE_HOURS = 24L
@@ -96,6 +99,9 @@ class SubscriptionRepository(
                     totalBytes = metadata.totalBytes,
                     expireEpochSeconds = metadata.expireEpochSeconds,
                     logoPath = refreshLogo(id, metadata.logoUrl, previousPath = null),
+                    supportUrl = metadata.supportUrl,
+                    webPageUrl = metadata.webPageUrl,
+                    announcement = metadata.announcement,
                 )
                 db.withTransaction {
                     subscriptions.upsert(entity)
@@ -138,6 +144,9 @@ class SubscriptionRepository(
                                 totalBytes = metadata.totalBytes,
                                 expireEpochSeconds = metadata.expireEpochSeconds,
                                 logoPath = logoPath,
+                                supportUrl = metadata.supportUrl,
+                                webPageUrl = metadata.webPageUrl,
+                                announcement = metadata.announcement,
                                 lastError = null,
                             )
                             subscriptions.upsert(updated)
@@ -318,6 +327,9 @@ class SubscriptionRepository(
         // The nested response is the real one: its sources override the outer's per key.
         return second.body to second.metadata.copy(
             geodataSources = GeodataSources.merge(first.metadata.geodataSources, second.metadata.geodataSources),
+            supportUrl = second.metadata.supportUrl ?: first.metadata.supportUrl,
+            webPageUrl = second.metadata.webPageUrl ?: first.metadata.webPageUrl,
+            announcement = second.metadata.announcement ?: first.metadata.announcement,
         )
     }
 

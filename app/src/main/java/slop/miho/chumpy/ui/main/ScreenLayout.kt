@@ -9,7 +9,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import slop.miho.chumpy.ui.theme.LocalUiSettings
@@ -30,7 +31,7 @@ fun isSmallScreen(): Boolean = LocalUiSettings.current.smallScreen ?: smallScree
 
 /** The width's own verdict on [isSmallScreen], whatever the user forced. */
 @Composable
-fun smallScreenByWidth(): Boolean = LocalConfiguration.current.screenWidthDp < SMALL_SCREEN_WIDTH_DP
+fun smallScreenByWidth(): Boolean = LocalWindowInfo.current.containerSize.width / LocalDensity.current.density < SMALL_SCREEN_WIDTH_DP
 
 /**
  * Whether the window is wide enough for the two-pane layout: Home in a pane of its own on
@@ -41,7 +42,7 @@ fun smallScreenByWidth(): Boolean = LocalConfiguration.current.screenWidthDp < S
  */
 @Composable
 fun isWideScreen(): Boolean =
-    LocalConfiguration.current.screenWidthDp >= WIDE_SCREEN_WIDTH_DP &&
+    LocalWindowInfo.current.containerSize.width / LocalDensity.current.density >= WIDE_SCREEN_WIDTH_DP &&
         LocalUiSettings.current.smallScreen != true
 
 /**

@@ -119,6 +119,7 @@ internal val LocalHomeBarFocusRequester = androidx.compose.runtime.staticComposi
 fun HomeScreen(
     status: TunnelStatus,
     home: HomeUiState,
+    modifier: Modifier = Modifier,
     /** Whether the page is the one on screen; coming into view re-measures the ping. */
     visible: Boolean = true,
     /** Re-measures the ping now; `true` blanks the old value while the new one is on its way. */
@@ -134,7 +135,6 @@ fun HomeScreen(
     onUpdateChipTap: () -> Unit = {},
     /** The update chip's long press: wave this version away until something newer lands. */
     onHideUpdate: () -> Unit = {},
-    modifier: Modifier = Modifier,
 ) {
     val up = status.state == TunnelState.UP
 

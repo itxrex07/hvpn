@@ -100,7 +100,7 @@ abstract class ProfileDao {
  */
 @Database(
     entities = [SubscriptionEntity::class, ProfileEntity::class],
-    version = 11,
+    version = 13,
     exportSchema = false,
 )
 abstract class ChumpyDatabase : RoomDatabase() {
@@ -234,6 +234,22 @@ abstract class ChumpyDatabase : RoomDatabase() {
         val MIGRATION_10_11 = object : Migration(10, 11) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE subscriptions ADD COLUMN logoPath TEXT")
+            }
+        }
+
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE subscriptions ADD COLUMN supportUrl TEXT")
+                db.execSQL("ALTER TABLE subscriptions ADD COLUMN webPageUrl TEXT")
+                db.execSQL("ALTER TABLE subscriptions ADD COLUMN announcement TEXT")
+            }
+        }
+
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE profiles ADD COLUMN tlsTrustCertificate TEXT")
+                db.execSQL("ALTER TABLE profiles ADD COLUMN hysteriaUpMbps INTEGER")
+                db.execSQL("ALTER TABLE profiles ADD COLUMN hysteriaDownMbps INTEGER")
             }
         }
 

@@ -1,5 +1,6 @@
 package slop.miho.chumpy.data
 
+import androidx.core.content.edit
 import android.app.ActivityManager
 import android.content.Context
 import org.json.JSONObject
@@ -352,8 +353,7 @@ object SettingsStore {
     }
 
     private fun write(context: Context, settings: UiSettings) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_THEME, settings.themeMode.name)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putString(KEY_THEME, settings.themeMode.name)
             .putString(KEY_ACCENT, settings.accent.name)
             .putBoolean(KEY_SLOW, settings.slowAnimations)
             .remove(KEY_SPEED)
@@ -402,8 +402,7 @@ object SettingsStore {
                 } else {
                     editor.remove(KEY_SMALL_SCREEN)
                 }
-            }
-            .apply()
+            } }
     }
 
     /** Unknown stored values (renamed enums) fall back to the default instead of crashing. */
