@@ -714,7 +714,9 @@ fun ExpressiveServersTab(
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 6.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             // Top bar: Title + real server count on left, Search + Ping All + More Options on right

@@ -386,12 +386,12 @@ fun KiranMainShell(
                 .fillMaxSize()
                 .padding(WindowInsets.statusBars.asPaddingValues()),
         ) {
-            KiranTopHeader(
-                isConnected = isConnected,
-                isBusy = isBusy,
-                onOpenAppearance = { showStyleModal = true },
-                onOpenLogs = { showLogsModal = true },
-            )
+            if (activeTab == KiranTab.HOME) {
+                KiranTopHeader(
+                    onOpenAppearance = { showStyleModal = true },
+                    onOpenLogs = { showLogsModal = true },
+                )
+            }
 
             Box(
                 modifier = Modifier
@@ -603,8 +603,6 @@ fun KiranMainShell(
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun KiranTopHeader(
-    isConnected: Boolean,
-    isBusy: Boolean,
     onOpenAppearance: () -> Unit,
     onOpenLogs: () -> Unit,
 ) {
@@ -646,45 +644,6 @@ private fun KiranTopHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val statusColor = when {
-                isConnected -> KiranColors.Mint
-                isBusy -> KiranColors.Peach
-                else -> KiranColors.TextMuted
-            }
-            val statusBg = when {
-                isConnected -> KiranColors.TagBg
-                isBusy -> KiranColors.NavBg
-                else -> KiranColors.Card
-            }
-            val statusLabel = when {
-                isConnected -> "Protected"
-                isBusy -> "Connecting"
-                else -> "Standby"
-            }
-
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(statusBg)
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(statusColor),
-                )
-                Text(
-                    text = statusLabel,
-                    fontFamily = OutfitFont,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    color = statusColor,
-                )
-            }
-
             Box(
                 modifier = Modifier
                     .size(36.dp)

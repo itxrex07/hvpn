@@ -398,12 +398,12 @@ fun SarhadMainShell(
                 .fillMaxSize()
                 .padding(WindowInsets.statusBars.asPaddingValues()),
         ) {
-            SarhadTopHeader(
-                isConnected = isConnected,
-                isBusy = isBusy,
-                onOpenAppearance = { showStyleModal = true },
-                onOpenLogs = { showLogsModal = true },
-            )
+            if (activeTab == SarhadTab.HOME) {
+                SarhadTopHeader(
+                    onOpenAppearance = { showStyleModal = true },
+                    onOpenLogs = { showLogsModal = true },
+                )
+            }
 
             Box(
                 modifier = Modifier
@@ -614,8 +614,6 @@ fun SarhadMainShell(
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun SarhadTopHeader(
-    isConnected: Boolean,
-    isBusy: Boolean,
     onOpenAppearance: () -> Unit,
     onOpenLogs: () -> Unit,
 ) {
@@ -657,38 +655,6 @@ private fun SarhadTopHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val statusColor = when {
-                isConnected -> SarhadColors.Green
-                isBusy -> SarhadColors.Pink
-                else -> SarhadColors.TextMuted
-            }
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(if (isConnected) SarhadColors.SelectedServer else SarhadColors.PillBg)
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(statusColor),
-                )
-                Text(
-                    text = when {
-                        isConnected -> "Tunnel Up"
-                        isBusy -> "Dialing"
-                        else -> "Standby"
-                    },
-                    fontFamily = OutfitFont,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    color = statusColor,
-                )
-            }
-
             Box(
                 modifier = Modifier
                     .size(36.dp)
