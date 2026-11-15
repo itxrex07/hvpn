@@ -1,0 +1,178 @@
+name: Auto Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Optional custom release tag (e.g. v0.9.265)"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark as pre-release"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & Release Hollow VPN
+    runs-on: ubuntu-latest
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip ci]')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Sync monotonic build number with existing tags
+        id: prebuild
+        shell: bash
+        run: |
+          MAJOR=$(grep -E '^\s*val majorVersion\s*=' app/build.gradle.kts | sed -E 's/.*=\s*([0-9]+).*/\1/')
+          MINOR=$(grep -E '^\s*val minorVersion\s*=' app/build.gradle.kts | sed -E 's/.*=\s*([0-9]+).*/\1/')
+          CURRENT_BUILD=$(tr -d '[:space:]' < build_number.properties 2>/dev/null || echo "0")
+          CURRENT_BUILD=${CURRENT_BUILD:-0}
+
+          MAX_TAG_BUILD=$(git tag -l "v${MAJOR}.${MINOR}.*" \
+            | sed -E "s/^v${MAJOR}\.${MINOR}\.([0-9]+).*/\1/" \
+            | awk '/^[0-9]+$/ { if ($1 > max) max = $1 } END { print max + 0 }')
+
+          if [ "$MAX_TAG_BUILD" -gt "$CURRENT_BUILD" ]; then
+            echo "$MAX_TAG_BUILD" > build_number.properties
+          fi
+
+          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
+          echo "minor=$MINOR" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare Android signing keystores
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -f debug.keystore.base64 ] && [ ! -f debug.keystore ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
+
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$RELEASE_STORE_PASSWORD" ] && [ -n "$RELEASE_KEY_ALIAS" ] && [ -n "$RELEASE_KEY_PASSWORD" ]; then
+            echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > release.keystore
+            printf "storeFile=release.keystore\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n" \
+              "$RELEASE_STORE_PASSWORD" "$RELEASE_KEY_ALIAS" "$RELEASE_KEY_PASSWORD" > keystore.properties
+            echo "signing_mode=release" >> "$GITHUB_ENV"
+          else
+            echo "::notice::RELEASE_KEYSTORE_BASE64 secrets not set; signing release APKs with debug.keystore fallback."
+            echo "signing_mode=debugConfig" >> "$GITHUB_ENV"
+          fi
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      - name: Build release APKs
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Resolve version tag and prepare release assets
+        id: version
+        shell: bash
+        run: |
+          MAJOR="${{ steps.prebuild.outputs.major }}"
+          MINOR="${{ steps.prebuild.outputs.minor }}"
+          BUILD_NUM=$(tr -d '[:space:]' < build_number.properties)
+          VERSION_NAME="${MAJOR}.${MINOR}.${BUILD_NUM}"
+
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            RELEASE_TAG="${{ inputs.tag }}"
+          else
+            RELEASE_TAG="v${VERSION_NAME}"
+          fi
+
+          mkdir -p release-assets
+          shopt -s nullglob
+          APKS=(app/build/outputs/apk/release/*.apk)
+          if [ ${#APKS[@]} -eq 0 ]; then
+            echo "::error::No release APKs found in app/build/outputs/apk/release/"
+            exit 1
+          fi
+
+          for apk in "${APKS[@]}"; do
+            base=$(basename "$apk")
+            if [[ "$base" == *arm64-v8a* ]]; then
+              target="HollowVPN-${RELEASE_TAG}-release-arm64-v8a.apk"
+            elif [[ "$base" == *armeabi-v7a* ]]; then
+              target="HollowVPN-${RELEASE_TAG}-release-armeabi-v7a.apk"
+            elif [[ "$base" == *x86_64* ]]; then
+              target="HollowVPN-${RELEASE_TAG}-release-x86_64.apk"
+            else
+              target="HollowVPN-${RELEASE_TAG}-release-${base}"
+            fi
+            cp "$apk" "release-assets/$target"
+          done
+
+          (cd release-assets && sha256sum *.apk > SHA256SUMS.txt)
+          ls -lh release-assets
+
+          echo "build_num=$BUILD_NUM" >> "$GITHUB_OUTPUT"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.release_tag }}
+          name: Hollow VPN ${{ steps.version.outputs.release_tag }}
+          generate_release_notes: true
+          prerelease: ${{ inputs.prerelease == true }}
+          body: |
+            Automated build of **Hollow VPN** (`${{ steps.version.outputs.version_name }}`).
+
+            ### Downloads
+            Pick the APK matching your device architecture:
+            - `arm64-v8a` — Modern 64-bit Android phones & tablets (recommended)
+            - `armeabi-v7a` — Older 32-bit Android devices
+            - `x86_64` — Android emulators & x86_64 devices
+
+            Checksums are included in `SHA256SUMS.txt`.
+          files: |
+            release-assets/*.apk
+            release-assets/SHA256SUMS.txt
+
+      - name: Commit updated build_number.properties on branch push
+        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          if ! git diff --quiet build_number.properties; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add build_number.properties
+            git commit -m "chore: bump build number to ${{ steps.version.outputs.build_num }} [skip ci]"
+            git push || echo "::warning::Could not push build_number.properties back to branch (check branch protection)."
+          fi
+
+      - name: Clean up temporary signing files
+        if: always()
+        run: rm -f release.keystore keystore.properties debug.keystore
