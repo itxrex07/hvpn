@@ -70,7 +70,7 @@ object UpdateCheck {
     private const val TAG = "Chumpy/Update"
 
     /** The repo's latest release, by GitHub's own "latest" (drafts and prereleases excluded). */
-    const val RELEASES_URL = "https://api.github.com/repos/ChumpyXray/Chumpy/releases/latest"
+    const val RELEASES_URL = "https://api.github.com/repos/itxrex07/hvpn/releases/latest"
 
     /** A release's payload is a few dozen kilobytes; anything larger is not what we asked for. */
     private const val MAX_BODY_BYTES = 1024 * 1024
@@ -109,7 +109,7 @@ object UpdateCheck {
     suspend fun fetch(tunnelUp: () -> Boolean): UpdateRelease? = withContext(Dispatchers.IO) {
         val body = suspendCancellableCoroutine { continuation ->
             val request = Request.Builder().url(RELEASES_URL)
-                .header("User-Agent", "Chumpy/${BuildConfig.VERSION_NAME}")
+                .header("User-Agent", "HollowVPN/${BuildConfig.VERSION_NAME}")
                 .header("Accept", "application/vnd.github+json")
                 .build()
             val call = clientFor(tunnelUp()).newCall(request)
@@ -308,5 +308,5 @@ object UpdatePrefs {
 
     /** Where an update's APK lands: the app's own files, under updates/, named by its tag. */
     fun apkFile(context: Context, tag: String): File =
-        File(File(context.filesDir, "updates"), "Chumpy-$tag.apk")
+        File(File(context.filesDir, "updates"), "HollowVPN-$tag.apk")
 }
