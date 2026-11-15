@@ -109,6 +109,22 @@ jobs:
             echo "signing_mode=debugConfig" >> "$GITHUB_ENV"
           fi
 
+      - name: Cache libv2ray.aar (AndroidLibXrayLite v26.10.31)
+        id: cache-libv2ray
+        uses: actions/cache@v4
+        with:
+          path: app/libs/libv2ray.aar
+          key: libv2ray-aar-v26.10.31
+
+      - name: Download libv2ray.aar if missing
+        if: steps.cache-libv2ray.outputs.cache-hit != 'true'
+        run: |
+          if [ ! -s "app/libs/libv2ray.aar" ]; then
+            mkdir -p app/libs
+            curl -fSL --retry 3 -o app/libs/libv2ray.aar \
+              "https://github.com/2dust/AndroidLibXrayLite/releases/download/v26.10.31/libv2ray.aar"
+          fi
+
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 

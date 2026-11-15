@@ -159,8 +159,7 @@ kotlin {
 }
 
 dependencies {
-    // Provided by in-tree Kotlin bindings in libv2ray/Libv2ray.kt and go/Seq.kt
-    // implementation(files("libs/libv2ray.aar"))
+    implementation(files("libs/libv2ray.aar"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

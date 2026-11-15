@@ -23,3 +23,6 @@ keystore.properties
 
 # The delivery script: local for now.
 build.sh
+
+# Downloaded native Xray core AAR (fetched & cached by CI).
+app/libs/*.aar
