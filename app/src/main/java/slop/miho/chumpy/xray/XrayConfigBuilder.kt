@@ -378,10 +378,6 @@ object XrayConfigBuilder {
                         put("domain", buildJsonArray { add(JsonPrimitive("domain:pk")) })
                         put("outboundTag", DIRECT_TAG)
                     }
-                    rule {
-                        put("ip", buildJsonArray { add(JsonPrimitive("geoip:pk")) })
-                        put("outboundTag", DIRECT_TAG)
-                    }
                 }
                 if (blockAds) {
                     rule {

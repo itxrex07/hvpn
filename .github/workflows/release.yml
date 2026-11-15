@@ -58,6 +58,7 @@ jobs:
         id: prebuild
         shell: bash
         run: |
+          git fetch --tags --force >/dev/null 2>&1 || true
           MAJOR=$(grep -E '^\s*val majorVersion\s*=' app/build.gradle.kts | sed -E 's/.*=\s*([0-9]+).*/\1/')
           MINOR=$(grep -E '^\s*val minorVersion\s*=' app/build.gradle.kts | sed -E 's/.*=\s*([0-9]+).*/\1/')
           CURRENT_BUILD=$(tr -d '[:space:]' < build_number.properties 2>/dev/null || echo "0")
@@ -187,18 +188,6 @@ jobs:
           files: |
             release-assets/*.apk
             release-assets/SHA256SUMS.txt
-
-      - name: Commit updated build_number.properties on branch push
-        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        run: |
-          if ! git diff --quiet build_number.properties; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add build_number.properties
-            git commit -m "chore: bump build number to ${{ steps.version.outputs.build_num }} [skip ci]"
-            git push || echo "::warning::Could not push build_number.properties back to branch (check branch protection)."
-          fi
 
       - name: Clean up temporary signing files
         if: always()

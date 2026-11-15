@@ -804,7 +804,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         fragmentInterval = requestedConnection.fragmentInterval,
                         muxEnabled = requestedConnection.muxEnabled,
                         muxConcurrency = requestedConnection.muxConcurrency,
-                    ), requestedConnection.routingMode == RoutingMode.GLOBAL && resolvedProfile.routingRules.isNotBlank())
+                    ), requestedConnection.blockAds || (requestedConnection.routingMode == RoutingMode.GLOBAL && resolvedProfile.routingRules.isNotBlank()))
                     val subscriptionName = resolvedProfile.subscriptionId?.let { repository.subscriptionById(it)?.name }
                     currentCoroutineContext().ensureActive()
                     val requestContext = currentCoroutineContext()

@@ -60,6 +60,8 @@ internal object GeodataFiles {
                 if (missing.isEmpty()) continue
                 if (allowStandardFallback && name == "geosite.dat") {
                     url = "https://github.com/XTLS/Xray-rules-dat/releases/latest/download/geosite.dat.gz"
+                } else if (allowStandardFallback && name == "geoip.dat") {
+                    url = "https://github.com/XTLS/Xray-rules-dat/releases/latest/download/geoip.dat.gz"
                 } else throw IOException(context.getString(R.string.error_geodata_source_missing, name, missing.sorted().joinToString(", ")))
             }
             val pointer = File(directory, "${GeodataSources.filenameFor(url)}.cache")
@@ -104,6 +106,7 @@ internal object GeodataFiles {
                 when {
                     parts.size == 3 && replacements.containsKey(parts[1]) -> JsonPrimitive("ext:${replacements.getValue(parts[1])}:${parts[2]}")
                     value.isString && text.startsWith("geosite:") && replacements.containsKey("geosite.dat") -> JsonPrimitive("ext:${replacements.getValue("geosite.dat")}:${text.removePrefix("geosite:")}")
+                    value.isString && text.startsWith("geoip:") && replacements.containsKey("geoip.dat") -> JsonPrimitive("ext:${replacements.getValue("geoip.dat")}:${text.removePrefix("geoip:")}")
                     else -> value
                 }
             }
