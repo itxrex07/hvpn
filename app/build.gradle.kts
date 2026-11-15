@@ -1,3 +1,4 @@
+import java.net.URI
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -40,7 +41,7 @@ android {
     val builderName = System.getProperty("user.name") ?: "unknown"
 
     defaultConfig {
-        applicationId = "com.hollow.vpn"
+        applicationId = "com.hollow.vpn.beta"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = buildNumber
@@ -155,6 +156,20 @@ kotlin {
             "androidx.compose.material3.ExperimentalMaterial3Api",
             "androidx.compose.material3.ExperimentalMaterial3ExpressiveApi",
         )
+    }
+}
+
+val libv2rayAar = file("libs/libv2ray.aar")
+if (!libv2rayAar.isFile || libv2rayAar.length() == 0L) {
+    libv2rayAar.parentFile.mkdirs()
+    val tmp = file("libs/libv2ray.aar.tmp")
+    URI("https://github.com/2dust/AndroidLibXrayLite/releases/download/v26.10.31/libv2ray.aar")
+        .toURL()
+        .openStream()
+        .use { input -> tmp.outputStream().use { output -> input.copyTo(output) } }
+    if (!tmp.renameTo(libv2rayAar)) {
+        tmp.copyTo(libv2rayAar, overwrite = true)
+        tmp.delete()
     }
 }
 
