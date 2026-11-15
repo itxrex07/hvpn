@@ -22,6 +22,16 @@ enum class ThemeMode {
 }
 
 /**
+ * The active UI/UX design style controllable from Appearance settings:
+ * - [KIRAN_A]: Style A — Kiran (Emerald / Mint #86E3B0 / Peach #FFDCC4, morphing blob, 4-tab pill nav)
+ * - [SARHAD_B]: Style B — Sarhad (Deep Indigo #0B0B10 / Violet #6C60F0 / Coral #FF8FB6, 14-point scalloped seal, 3-tab nav)
+ */
+enum class DesignStyle {
+    KIRAN_A,
+    SARHAD_B,
+}
+
+/**
  * How the server list draws an exit's country: Twemoji flags from the bundled font, the
  * system's own emoji flags, or the plain globe icon the list used before flags existed.
  */
@@ -90,6 +100,8 @@ enum class Accent(val hue: Float) {
 
 /** UI preferences. Nothing sensitive here, so plain SharedPreferences storage is fine. */
 data class UiSettings(
+    val designStyle: DesignStyle = DesignStyle.KIRAN_A,
+    val onboardingCompleted: Boolean = false,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val accent: Accent = Accent.ADAPTIVE,
     val slowAnimations: Boolean = false,
@@ -289,6 +301,8 @@ object SettingsStore {
             prefs.getString(KEY_HAPP_USER_ID, null).isNullOrBlank() ||
                 prefs.getString(KEY_HAPP_HWID, null).isNullOrBlank()
         val settings = UiSettings(
+            designStyle = enumEntry(prefs.getString(KEY_DESIGN_STYLE, null), DesignStyle.KIRAN_A),
+            onboardingCompleted = prefs.getBoolean(KEY_ONBOARDING_COMPLETED, false),
             themeMode = enumEntry(prefs.getString(KEY_THEME, null), ThemeMode.SYSTEM),
             accent = enumEntry(prefs.getString(KEY_ACCENT, null), Accent.ADAPTIVE),
             // The speed setting used to be a three-way enum; a stored SLOW carries over.
@@ -353,6 +367,8 @@ object SettingsStore {
 
     private fun write(context: Context, settings: UiSettings) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_DESIGN_STYLE, settings.designStyle.name)
+            .putBoolean(KEY_ONBOARDING_COMPLETED, settings.onboardingCompleted)
             .putString(KEY_THEME, settings.themeMode.name)
             .putString(KEY_ACCENT, settings.accent.name)
             .putBoolean(KEY_SLOW, settings.slowAnimations)
@@ -422,6 +438,8 @@ object SettingsStore {
         return info.totalMem < 6L * 1024 * 1024 * 1024
     }
 
+    private const val KEY_DESIGN_STYLE = "design_style"
+    private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
     private const val KEY_THEME = "theme_mode"
     private const val KEY_ACCENT = "accent"
     private const val KEY_SLOW = "slow_animations"

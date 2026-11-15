@@ -156,6 +156,9 @@ data class StatsUiState(
      *  core resets its counters on every read) — the frozen connection's total. */
     val rxTotal: Long = 0,
     val txTotal: Long = 0,
+    /** Instantaneous 1-second download and upload speeds in bytes/sec for Home speed cards. */
+    val liveDownBps: Long = 0,
+    val liveUpBps: Long = 0,
     /** When the graphs froze — the moment the tunnel went down; null while connected. */
     val frozenAtMillis: Long? = null,
     /** How long the frozen connection lasted; null until a connection ends. */
@@ -398,7 +401,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun installUpdate() {
         val tag = UpdatePrefs.downloadedTag(app) ?: return
         val file = UpdatePrefs.apkFile(app, tag).takeIf { it.isFile } ?: return
-        val uri = FileProvider.getUriForFile(app, "slop.miho.chumpy.fileprovider", file)
+        val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
         val install = Intent(Intent.ACTION_VIEW)
             .setDataAndType(uri, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -420,8 +423,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val before = connection.value
         ConnectionStore.update(app, transform)
         val after = connection.value
-        // A routing change rewrites the running config; the tunnel reloads in place.
-        if (before.routingMode != after.routingMode &&
+        val configChanged = before.routingMode != after.routingMode ||
+            before.bypassDomestic != after.bypassDomestic ||
+            before.blockAds != after.blockAds ||
+            before.dnsProvider != after.dnsProvider ||
+            before.fragmentEnabled != after.fragmentEnabled ||
+            before.fragmentLength != after.fragmentLength ||
+            before.fragmentInterval != after.fragmentInterval ||
+            before.muxEnabled != after.muxEnabled ||
+            before.muxConcurrency != after.muxConcurrency
+        // A routing, DNS, fragment or mux change rewrites the running config; the tunnel reloads in place.
+        if (configChanged &&
             tunnelStatus.value.state in setOf(TunnelState.UP, TunnelState.CONNECTING)) {
             applyConfigAndConnect()
         }
@@ -531,9 +543,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * or a manually imported profile. Null while the first read is still in flight.
      */
     val setupDone: StateFlow<Boolean?> =
-        combine(subscriptions, repository.manualProfileCount) { subs, manual ->
-            subs.isNotEmpty() || manual > 0
+        combine(subscriptions, repository.manualProfileCount, settings) { subs, manual, ui ->
+            subs.isNotEmpty() || manual > 0 || ui.onboardingCompleted
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    fun completeOnboarding() {
+        updateSettings { it.copy(onboardingCompleted = true) }
+    }
 
     /** Home screen extras: identity chips, ping, uptime, loss. */
     private data class ActiveIdentity(val profile: ProfileEntity, val subscription: SubscriptionEntity?)
@@ -780,6 +796,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         requestedConnection.routingMode,
                         members,
                         requestedConnection.delayTestUrl,
+                        bypassDomestic = requestedConnection.bypassDomestic,
+                        blockAds = requestedConnection.blockAds,
+                        dnsProvider = requestedConnection.dnsProvider,
+                        fragmentEnabled = requestedConnection.fragmentEnabled,
+                        fragmentLength = requestedConnection.fragmentLength,
+                        fragmentInterval = requestedConnection.fragmentInterval,
+                        muxEnabled = requestedConnection.muxEnabled,
+                        muxConcurrency = requestedConnection.muxConcurrency,
                     ), requestedConnection.routingMode == RoutingMode.GLOBAL && resolvedProfile.routingRules.isNotBlank())
                     val subscriptionName = resolvedProfile.subscriptionId?.let { repository.subscriptionById(it)?.name }
                     currentCoroutineContext().ensureActive()
@@ -999,6 +1023,89 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Reloads the active Xray tunnel when routing, DNS, or fragment settings change while connected. */
+    fun reloadTunnelIfConnected() {
+        if (tunnelStatus.value.state in setOf(TunnelState.UP, TunnelState.CONNECTING)) {
+            applyConfigAndConnect()
+        }
+    }
+
+    /** Updates all subscriptions in sequence. */
+    fun updateAllSubscriptions() {
+        val subs = subscriptions.value
+        if (subs.isEmpty()) {
+            pingServers()
+            return
+        }
+        viewModelScope.launch {
+            _servers.update { it.copy(isUpdating = true, error = null) }
+            subs.forEach { sub ->
+                repository.updateSubscription(sub.id)
+            }
+            _servers.update { it.copy(isUpdating = false) }
+        }
+    }
+
+    /** Deletes a set of profiles by ID (or conceals them if they belong to a remote subscription). */
+    fun deleteProfiles(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            configurationMutex.withLock {
+                val currentProfiles = _servers.value.profiles.filter { it.id in ids }
+                currentProfiles.forEach { profile ->
+                    invalidateConfiguration(profileId = profile.id)
+                    if (profile.subscriptionId == null) {
+                        repository.deleteManualProfile(profile.id)
+                    } else {
+                        repository.setProfileConcealed(profile.id, true)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Removes profiles with duplicate server+port+protocol in the current list. */
+    fun deleteDuplicateProfiles(): Int {
+        val list = _servers.value.profiles
+        val seen = mutableSetOf<String>()
+        val duplicates = mutableSetOf<String>()
+        for (p in list) {
+            val key = "${p.type}:${p.server.lowercase()}:${p.serverPort}:${p.sni.lowercase()}:${p.path}"
+            if (!seen.add(key)) {
+                duplicates.add(p.id)
+            }
+        }
+        deleteProfiles(duplicates)
+        return duplicates.size
+    }
+
+    /** Removes profiles that timed out / failed the last delay test or have invalid ports. */
+    fun deleteInvalidProfiles(): Int {
+        val list = _servers.value.profiles
+        val invalid = list.filter {
+            (it.lastTestAt != null && (it.testDelayMillis == null || it.testDelayMillis <= 0L)) ||
+                it.server.isBlank() || it.serverPort !in 1..65535
+        }.map { it.id }.toSet()
+        deleteProfiles(invalid)
+        return invalid.size
+    }
+
+    /** Deletes all profiles in the currently selected subscription/standalone group. */
+    fun deleteAllProfiles() {
+        val subId = selectedSubscriptionId.value ?: STANDALONE_SUBSCRIPTION_ID
+        deleteSubscription(subId)
+    }
+
+    /** Exports all visible server share links as newline-separated text for clipboard sharing. */
+    fun exportAllProfiles(): String {
+        return _servers.value.profiles
+            .map {
+                it.sourceLink?.takeIf { link -> link.isNotBlank() }
+                    ?: "${it.type.name.lowercase()}://${it.server}:${it.serverPort}#${it.remarks}"
+            }
+            .joinToString("\n")
+    }
+
     // ------------------------------------------------------------ real pings
 
     /**
@@ -1193,6 +1300,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             val now = System.currentTimeMillis()
                             _stats.update { state ->
                                 state.copy(
+                                    liveDownBps = 0L,
+                                    liveUpBps = 0L,
                                     frozenAtMillis = state.frozenAtMillis ?: now,
                                     connectedMillis = state.connectedMillis
                                         ?: sessionStartMillis.takeIf { it != 0L }
@@ -1250,6 +1359,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         bucketUpBytes += up
                         val bucketDown = bucketDownBytes * 1_000 / bucketMillis
                         val bucketUp = bucketUpBytes * 1_000 / bucketMillis
+                        val liveDown = down * 1_000 / elapsed
+                        val liveUp = up * 1_000 / elapsed
                         _stats.update { state ->
                             val samples = state.samples.toMutableList()
                             val index = samples.indexOfLast { it.atMillis == bucketStart }
@@ -1265,6 +1376,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 samples = trimWindow(samples),
                                 rxTotal = sessionRx,
                                 txTotal = sessionTx,
+                                liveDownBps = liveDown,
+                                liveUpBps = liveUp,
                             )
                         }
                         if (now - lastFlushAtMillis >= DAILY_FLUSH_MILLIS) {

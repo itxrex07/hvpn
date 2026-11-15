@@ -73,7 +73,7 @@ fun PhoneImportAction(initialFocus: Boolean = false, wallpaper: Boolean = false,
 }
 
 @Composable
-private fun PhoneImportDialog(onDismiss: () -> Unit, wallpaper: Boolean, onImport: (String, (String?) -> Unit) -> Unit) {
+fun PhoneImportDialog(onDismiss: () -> Unit, wallpaper: Boolean = false, onImport: (String, (String?) -> Unit) -> Unit) {
     val context = LocalContext.current
     val resources = LocalResources.current
     val windowSize = LocalWindowInfo.current.containerSize

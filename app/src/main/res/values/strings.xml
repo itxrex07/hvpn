@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name" translatable="false">Chumpy</string>
+    <string name="app_name" translatable="false">Hollow VPN</string>
 
     <!-- The build's own stage, worn as a quiet chip. -->
     <string name="badge_alpha">Alpha</string>
@@ -102,12 +102,14 @@
     <string name="happ_regenerate_confirm">Regenerate</string>
 
     <!-- Welcome (first run) -->
-    <string name="welcome_title">Hello, stranger!</string>
-    <string name="welcome_subtitle">Welcome to Chumpy! Add a subscription or config to get started.</string>
+    <string name="welcome_title">Welcome to Hollow VPN</string>
+    <string name="welcome_subtitle">Import a subscription URL or server link to get started.</string>
     <string name="import_nothing_new">Nothing new to import</string>
 
     <!-- Settings -->
     <string name="settings_interface">Interface</string>
+    <string name="settings_style_kiran" translatable="false">Style A · Kiran</string>
+    <string name="settings_style_sarhad" translatable="false">Style B · Sarhad</string>
     <string name="settings_connection">Connection</string>
     <string name="settings_about">About</string>
     <string name="settings_colors">Colors</string>
@@ -146,7 +148,7 @@
     <string name="settings_flag_system">System emoji</string>
     <string name="settings_flag_globe">Just globe</string>
     <string name="settings_app_icon">App icon</string>
-    <string name="settings_icon_chumpy" translatable="false">Chumpy</string>
+    <string name="settings_icon_chumpy" translatable="false">Hollow Mint</string>
     <string name="settings_icon_inverted">Inverted</string>
     <string name="settings_icon_dark">Dark</string>
     <string name="settings_icon_themed">Themed</string>
@@ -272,14 +274,14 @@
     <string name="notif_interrupted_revoked">Another VPN took over this one.</string>
     <string name="notif_interrupted_auto">Another VPN took over this one. Reconnecting…</string>
     <string name="notif_reconnected_title">Connection restored</string>
-    <string name="notif_reconnected_text">Chumpy brought the tunnel back by itself.</string>
+    <string name="notif_reconnected_text">Hollow VPN brought the tunnel back by itself.</string>
     <string name="notif_reconnect_failed_title">Reconnect failed</string>
-    <string name="notif_interrupted_off">The tunnel is down — Chumpy will not bring it back on its own.</string>
+    <string name="notif_interrupted_off">The tunnel is down — Hollow VPN will not bring it back on its own.</string>
     <string name="notif_action_reconnect">Reconnect</string>
     <string name="notif_action_disconnect_anyway">Disconnect anyway</string>
     <string name="notif_channel_updates">App updates</string>
     <string name="notif_channel_updates_desc">A new version\'s download and its install ask</string>
-    <string name="notif_update_title">Chumpy update</string>
+    <string name="notif_update_title">Hollow VPN update</string>
     <string name="notif_update_downloading">Downloading the new version…</string>
     <string name="notif_update_paused">Download paused</string>
     <string name="notif_update_pause">Pause</string>

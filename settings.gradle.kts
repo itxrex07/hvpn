@@ -16,6 +16,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Chumpy"
+rootProject.name = "Hollow VPN"
 
 include(":app")

@@ -260,6 +260,102 @@ fun MainShell(viewModel: MainViewModel) {
         if (consent != null) vpnPermission.launch(consent) else viewModel.connect()
     }
 
+    val stats by viewModel.stats.collectAsStateWithLifecycle()
+    val connectionSettings by viewModel.connection.collectAsStateWithLifecycle()
+    val selectedProfile by viewModel.selectedProfile.collectAsStateWithLifecycle()
+    val coreVersion by viewModel.coreVersion.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val qrScanner = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val text = result.data?.getStringExtra(slop.miho.chumpy.ui.scan.ScannerActivity.KEY_TEXT)
+            ?: return@rememberLauncherForActivityResult
+        viewModel.addSubscription(text, null) {}
+    }
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val text = runCatching {
+                context.contentResolver.openInputStream(uri)?.use {
+                    slop.miho.chumpy.data.ImportedFile.readText(it)
+                }
+            }.getOrNull()
+            if (!text.isNullOrBlank()) {
+                viewModel.addManualProfiles(text) {}
+            }
+        }
+    }
+    SystemBarsIconsDark(dark = true)
+    when (settings.designStyle) {
+        slop.miho.chumpy.data.DesignStyle.KIRAN_A -> {
+            slop.miho.chumpy.ui.expressive.KiranMainShell(
+                viewModel = viewModel,
+                tunnelStatus = tunnelStatus,
+                home = home,
+                servers = servers,
+                stats = stats,
+                settings = settings,
+                connectionSettings = connectionSettings,
+                selectedProfile = selectedProfile,
+                onConnect = connectWithConsent,
+                onDisconnect = viewModel::disconnect,
+                onOpenPerAppProxy = {
+                    context.startActivity(
+                        android.content.Intent(
+                            context,
+                            slop.miho.chumpy.ui.perapp.PerAppProxyActivity::class.java,
+                        )
+                    )
+                },
+                onScanQr = {
+                    qrScanner.launch(
+                        android.content.Intent(
+                            context,
+                            slop.miho.chumpy.ui.scan.ScannerActivity::class.java,
+                        )
+                    )
+                },
+                onImportFile = { filePicker.launch(arrayOf("*/*")) },
+            )
+        }
+
+        slop.miho.chumpy.data.DesignStyle.SARHAD_B -> {
+            slop.miho.chumpy.ui.expressive.SarhadMainShell(
+                viewModel = viewModel,
+                tunnelStatus = tunnelStatus,
+                home = home,
+                servers = servers,
+                stats = stats,
+                settings = settings,
+                connectionSettings = connectionSettings,
+                selectedProfile = selectedProfile,
+                coreVersion = coreVersion,
+                onConnect = connectWithConsent,
+                onDisconnect = viewModel::disconnect,
+                onOpenPerAppProxy = {
+                    context.startActivity(
+                        android.content.Intent(
+                            context,
+                            slop.miho.chumpy.ui.perapp.PerAppProxyActivity::class.java,
+                        )
+                    )
+                },
+                onScanQr = {
+                    qrScanner.launch(
+                        android.content.Intent(
+                            context,
+                            slop.miho.chumpy.ui.scan.ScannerActivity::class.java,
+                        )
+                    )
+                },
+                onImportFile = { filePicker.launch(arrayOf("*/*")) },
+            )
+        }
+    }
+    if (true) return
+
     // The settings pages' shared scroll state, owned above either layout — the pager
     // strip's two modes and the two-pane split — so flipping between any of them keeps
     // the interface page's position.

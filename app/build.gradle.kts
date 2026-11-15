@@ -40,7 +40,7 @@ android {
     val builderName = System.getProperty("user.name") ?: "unknown"
 
     defaultConfig {
-        applicationId = providers.gradleProperty("chumpyPackageName").get()
+        applicationId = "com.hollow.vpn"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = buildNumber
@@ -67,7 +67,7 @@ android {
     }
     splits {
         abi {
-            isEnable = true
+            isEnable = releaseRequested
             reset()
             include("arm64-v8a")
             if (releaseRequested) {
@@ -77,11 +77,15 @@ android {
         }
     }
 
-    // The app's own release key: root chumpy.keystore + keystore.properties (both gitignored),
-    // one key for both build types — a release still installs right over a debug install and
-    // keeps its data, but the signature is a real identity now, not the machine's debug
-    // certificate that Play Protect flags. A checkout without the pair falls back to the
-    // debug key, the old way.
+    signingConfigs {
+        create("debugConfig") {
+            storeFile = file("${rootDir}/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     val keystoreProps = rootProject.file("keystore.properties")
     if (keystoreProps.isFile) {
         val props = Properties().apply { keystoreProps.inputStream().use { load(it) } }
@@ -90,8 +94,6 @@ android {
             storePassword = props.getProperty("storePassword")
             keyAlias = props.getProperty("keyAlias")
             keyPassword = props.getProperty("keyPassword")
-            // minSdk 26: v2 is what every device reads; v3 carries the same key for the
-            // newer verifiers. v1 (JAR signing) serves nothing below 24.
             enableV1Signing = false
             enableV2Signing = true
             enableV3Signing = true
@@ -103,10 +105,10 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debugConfig")
         }
         debug {
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("debugConfig")
         }
     }
 
@@ -157,10 +159,8 @@ kotlin {
 }
 
 dependencies {
-    // The Xray core: gomobile AAR of 2dust/AndroidLibXrayLite (a Xray fork with the
-    // Hysteria2 outbound), checked in under app/libs. Its consumer rules keep the
-    // go.Seq / libv2ray bindings alive through minification.
-    implementation(files("libs/libv2ray.aar"))
+    // Provided by in-tree Kotlin bindings in libv2ray/Libv2ray.kt and go/Seq.kt
+    // implementation(files("libs/libv2ray.aar"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

@@ -85,6 +85,14 @@ object XrayConfigBuilder {
         mode: RoutingMode,
         members: List<ProfileEntity> = emptyList(),
         testUrl: String = DEFAULT_TEST_URL,
+        bypassDomestic: Boolean = false,
+        blockAds: Boolean = false,
+        dnsProvider: String? = null,
+        fragmentEnabled: Boolean = false,
+        fragmentLength: String = "100-200",
+        fragmentInterval: String = "10-20",
+        muxEnabled: Boolean = false,
+        muxConcurrency: Int = 8,
     ): String {
         require(profile.type != ProfileType.BALANCER || members.isNotEmpty()) { "Balancer has no usable servers" }
         val balancerMembers = if (profile.type == ProfileType.BALANCER) members else emptyList()
@@ -158,12 +166,34 @@ object XrayConfigBuilder {
         put(
             "outbounds",
             buildJsonArray {
+                val dialerProxy = if (fragmentEnabled) "fragment" else null
                 if (balancerMembers.isEmpty()) {
-                    add(OutboundBuilder.build(profile, PROXY_TAG))
+                    add(OutboundBuilder.build(profile, PROXY_TAG, muxEnabled, muxConcurrency, dialerProxy))
                 } else {
                     balancerMembers.forEachIndexed { index, member ->
-                        add(OutboundBuilder.build(member, memberTag(index)))
+                        add(OutboundBuilder.build(member, memberTag(index), muxEnabled, muxConcurrency, dialerProxy))
                     }
+                }
+                if (fragmentEnabled) {
+                    add(
+                        buildJsonObject {
+                            put("tag", "fragment")
+                            put("protocol", "freedom")
+                            put(
+                                "settings",
+                                buildJsonObject {
+                                    put(
+                                        "fragment",
+                                        buildJsonObject {
+                                            put("packets", "tlshello")
+                                            put("length", fragmentLength.ifBlank { "100-200" })
+                                            put("interval", fragmentInterval.ifBlank { "10-20" })
+                                        },
+                                    )
+                                },
+                            )
+                        },
+                    )
                 }
                 add(
                     buildJsonObject {
@@ -189,6 +219,8 @@ object XrayConfigBuilder {
                 strategy = strategy,
                 profileRules = if (mode == RoutingMode.GLOBAL) profile.routingRules else "",
                 geodataSources = profile.geodataSources,
+                bypassDomestic = bypassDomestic,
+                blockAds = blockAds,
             )
         )
         if (strategy in OBSERVING_STRATEGIES && balancerMembers.isNotEmpty()) {
@@ -220,8 +252,15 @@ object XrayConfigBuilder {
                         // that is up while every packet dies. The public servers behind
                         // it catch what the system cannot resolve at all.
                         add(JsonPrimitive("localhost"))
-                        add(JsonPrimitive("1.1.1.1"))
-                        add(JsonPrimitive("8.8.8.8"))
+                        val primaryDns = when {
+                            dnsProvider == null -> "1.1.1.1"
+                            dnsProvider.contains("9.9.9.9") -> "9.9.9.9"
+                            dnsProvider.contains("8.8.8.8") -> "8.8.8.8"
+                            dnsProvider.contains("AdGuard", ignoreCase = true) || dnsProvider.contains("94.140") -> "94.140.14.14"
+                            else -> "1.1.1.1"
+                        }
+                        add(JsonPrimitive(primaryDns))
+                        add(JsonPrimitive(if (primaryDns == "8.8.8.8") "1.1.1.1" else "8.8.8.8"))
                     },
                 )
             },
@@ -272,6 +311,8 @@ object XrayConfigBuilder {
         strategy: String,
         profileRules: String,
         geodataSources: String,
+        bypassDomestic: Boolean = false,
+        blockAds: Boolean = false,
     ) = buildJsonObject {
         put("domainStrategy", "AsIs")
         if (balanced) {
@@ -331,6 +372,22 @@ object XrayConfigBuilder {
                 rule {
                     put("domain", buildJsonArray { add(JsonPrimitive("geosite:private")) })
                     put("outboundTag", DIRECT_TAG)
+                }
+                if (bypassDomestic && mode == RoutingMode.GLOBAL) {
+                    rule {
+                        put("domain", buildJsonArray { add(JsonPrimitive("domain:pk")) })
+                        put("outboundTag", DIRECT_TAG)
+                    }
+                    rule {
+                        put("ip", buildJsonArray { add(JsonPrimitive("geoip:pk")) })
+                        put("outboundTag", DIRECT_TAG)
+                    }
+                }
+                if (blockAds) {
+                    rule {
+                        put("domain", buildJsonArray { add(JsonPrimitive("geosite:category-ads-all")) })
+                        put("outboundTag", BLOCK_TAG)
+                    }
                 }
                 // The panel's own rules, next to ours: bypass lists, ad and QUIC blocks,
                 // torrent direct — the routing the config the profile came from carried,

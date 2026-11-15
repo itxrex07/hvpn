@@ -26,14 +26,36 @@ object OutboundBuilder {
     /** The endpoint host the config's address field wants, IPv6 brackets included. */
     private fun host(profile: ProfileEntity): String = LinkUtils.ipv6Brackets(profile.server)
 
-    fun build(profile: ProfileEntity, tag: String = "proxy"): JsonObject = buildJsonObject {
+    fun build(
+        profile: ProfileEntity,
+        tag: String = "proxy",
+        muxEnabled: Boolean = false,
+        muxConcurrency: Int = 8,
+        dialerProxy: String? = null,
+    ): JsonObject = buildJsonObject {
         put("tag", tag)
         put("protocol", protocolName(profile.type))
         put("settings", settings(profile))
         if (profile.type != ProfileType.WIREGUARD) {
-            streamSettings(profile)?.let { put("streamSettings", it) }
+            val stream = streamSettings(profile)
+            if (dialerProxy != null && stream != null) {
+                val existingSockopt = stream["sockopt"] as? JsonObject
+                val updatedSockopt = JsonObject(
+                    (existingSockopt?.toMap() ?: emptyMap()) + ("dialerProxy" to JsonPrimitive(dialerProxy)),
+                )
+                put("streamSettings", stream.with("sockopt" to updatedSockopt))
+            } else {
+                stream?.let { put("streamSettings", it) }
+            }
         }
-        put("mux", buildJsonObject { put("enabled", false) })
+        val useMux = muxEnabled && profile.type != ProfileType.WIREGUARD && profile.type != ProfileType.HYSTERIA2
+        put(
+            "mux",
+            buildJsonObject {
+                put("enabled", useMux)
+                if (useMux) put("concurrency", muxConcurrency.coerceIn(1, 64))
+            },
+        )
     }
 
     fun protocolName(type: ProfileType): String = when (type) {

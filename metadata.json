@@ -1,0 +1,6 @@
+{
+  "name": "Hollow VPN",
+  "description": "Material 3 Expressive Xray VPN client featuring Kiran and Sarhad design styles with smart routing, per-app split tunneling, and subscription management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

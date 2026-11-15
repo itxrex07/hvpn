@@ -187,6 +187,27 @@ fun InterfaceScreen(
             SettingsGroup(
                 {
                     IconChoiceRow(
+                        title = "UI Design Style",
+                        options = listOf(
+                            IconChoice(
+                                R.drawable.ic_appearance_fill,
+                                R.string.settings_style_kiran,
+                                slop.miho.chumpy.data.DesignStyle.KIRAN_A,
+                            ),
+                            IconChoice(
+                                R.drawable.ic_explore,
+                                R.string.settings_style_sarhad,
+                                slop.miho.chumpy.data.DesignStyle.SARHAD_B,
+                            ),
+                        ),
+                        selected = settings.designStyle,
+                        onSelect = { style -> onChange { it.copy(designStyle = style) } },
+                    )
+                },
+            )
+            SettingsGroup(
+                {
+                    IconChoiceRow(
                         title = stringResource(R.string.settings_colors),
                         options = listOf(
                             IconChoice(

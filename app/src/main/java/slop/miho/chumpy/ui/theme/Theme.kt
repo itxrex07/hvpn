@@ -192,14 +192,17 @@ private fun ColorScheme.amoled(): ColorScheme = copy(
  * font rather than crashing the theme.
  */
 @Composable
-private fun appFontFamily(fontId: String): FontFamily? = when {
-    fontId == FontRegistry.SYSTEM_ID -> null
-    fontId == FontRegistry.INTER_ID -> FontRegistry.inter
-    else -> {
-        val context = LocalContext.current
-        val version by FontRegistry.version.collectAsStateWithLifecycle()
-        val file: File? = remember(fontId, version) { FontRegistry.customFontFile(context, fontId) }
-        file?.let { remember(file, version) { FontFamily(Font(it)) } }
+private fun appFontFamily(fontId: String): FontFamily? {
+    return when {
+        fontId == FontRegistry.OUTFIT_ID -> FontRegistry.outfit
+        fontId == FontRegistry.INTER_ID -> FontRegistry.outfit
+        fontId == FontRegistry.SYSTEM_ID -> null
+        else -> {
+            val context = LocalContext.current
+            val version by FontRegistry.version.collectAsStateWithLifecycle()
+            val file: File? = remember(fontId, version) { FontRegistry.customFontFile(context, fontId) }
+            file?.let { remember(file, version) { FontFamily(Font(it)) } }
+        }
     }
 }
 

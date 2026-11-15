@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import slop.miho.chumpy.ui.MainViewModel
 import slop.miho.chumpy.ui.components.SystemBarsIconsDark
 import slop.miho.chumpy.ui.main.MainShell
@@ -62,22 +63,41 @@ class MainActivity : ControllerActivity() {
                     // setupDone stays null while the database answers for the first time:
                     // the app holds on the theme until it knows which screen to show.
                     val setupDone by viewModel.setupDone.collectAsStateWithLifecycle()
+                    val scope = androidx.compose.runtime.rememberCoroutineScope()
+                    val context = androidx.compose.ui.platform.LocalContext.current
+                    val qrScanner = rememberLauncherForActivityResult(
+                        ActivityResultContracts.StartActivityForResult(),
+                    ) { result ->
+                        val text = result.data?.getStringExtra(slop.miho.chumpy.ui.scan.ScannerActivity.KEY_TEXT)
+                            ?: return@rememberLauncherForActivityResult
+                        viewModel.addSubscription(text, null) {}
+                    }
+                    val filePicker = rememberLauncherForActivityResult(
+                        ActivityResultContracts.OpenDocument(),
+                    ) { uri ->
+                        if (uri == null) return@rememberLauncherForActivityResult
+                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            val text = runCatching {
+                                context.contentResolver.openInputStream(uri)?.use {
+                                    slop.miho.chumpy.data.ImportedFile.readText(it)
+                                }
+                            }.getOrNull()
+                            if (!text.isNullOrBlank()) {
+                                viewModel.addManualProfiles(text) {}
+                            }
+                        }
+                    }
+
                     AnimatedContent(
                         targetState = setupDone,
                         transitionSpec = {
                             if (initialState == null) {
-                                // The app coming open: the hold's empty slot is zero-sized, and
-                                // growing it out with the clip would unfold the window out of
-                                // a corner. The system's own window fade has the launch
-                                // covered — the shell lands whole, at once.
                                 ContentTransform(
                                     targetContentEnter = fadeIn(snap()),
                                     initialContentExit = fadeOut(snap()),
                                     sizeTransform = SizeTransform(sizeAnimationSpec = { _, _ -> snap() }),
                                 )
                             } else {
-                                // Onboarding answered and the shell takes over: the slow
-                                // fade with the settle-down from a touch shy of full.
                                 (fadeIn(motion.slowEffectsSpec()) +
                                     scaleIn(motion.slowSpatialSpec(), initialScale = 0.92f))
                                     .togetherWith(fadeOut(motion.fastEffectsSpec()))
@@ -88,13 +108,45 @@ class MainActivity : ControllerActivity() {
                         if (onboarded == true) {
                             MainShell(viewModel)
                         } else if (onboarded == false) {
-                            // No wallpaper here — the bars answer to the theme alone. The
-                            // main shell takes over the window the moment it composes.
-                            SystemBarsIconsDark(dark = LocalDarkTheme.current)
-                            WelcomeScreen(
-                                onAddSubscription = viewModel::addSubscription,
-                                onImport = viewModel::addManualProfiles,
-                            )
+                            when (settings.designStyle) {
+                                slop.miho.chumpy.data.DesignStyle.KIRAN_A -> {
+                                    SystemBarsIconsDark(dark = true)
+                                    slop.miho.chumpy.ui.expressive.KiranWelcomeScreen(
+                                        onGetStarted = { viewModel.completeOnboarding() },
+                                        onSubmitConfig = { text, name, onDone ->
+                                            viewModel.addSubscription(text, name, onDone)
+                                        },
+                                        onScanQr = {
+                                            qrScanner.launch(Intent(context, slop.miho.chumpy.ui.scan.ScannerActivity::class.java))
+                                        },
+                                        onImportFile = {
+                                            filePicker.launch(arrayOf("*/*"))
+                                        },
+                                        onSwitchStyle = { newStyle ->
+                                            viewModel.updateSettings { it.copy(designStyle = newStyle) }
+                                        },
+                                    )
+                                }
+
+                                slop.miho.chumpy.data.DesignStyle.SARHAD_B -> {
+                                    SystemBarsIconsDark(dark = true)
+                                    slop.miho.chumpy.ui.expressive.SarhadWelcomeScreen(
+                                        onGetStarted = { viewModel.completeOnboarding() },
+                                        onSubmitConfig = { text, name, onDone ->
+                                            viewModel.addSubscription(text, name, onDone)
+                                        },
+                                        onScanQr = {
+                                            qrScanner.launch(Intent(context, slop.miho.chumpy.ui.scan.ScannerActivity::class.java))
+                                        },
+                                        onImportFile = {
+                                            filePicker.launch(arrayOf("*/*"))
+                                        },
+                                        onSwitchStyle = { newStyle ->
+                                            viewModel.updateSettings { it.copy(designStyle = newStyle) }
+                                        },
+                                    )
+                                }
+                            }
                         }
                     }
                 }

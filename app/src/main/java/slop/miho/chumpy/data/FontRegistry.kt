@@ -22,6 +22,19 @@ object FontRegistry {
 
     const val SYSTEM_ID = "system"
     const val INTER_ID = "inter"
+    const val OUTFIT_ID = "outfit"
+
+    /**
+     * Outfit font family used by the Kiran (Style A) and Sarhad (Style B) Material 3 Expressive
+     * interfaces.
+     */
+    val outfit = FontFamily(
+        Font(R.font.outfit, weight = FontWeight.Normal),
+        Font(R.font.outfit, weight = FontWeight.Medium),
+        Font(R.font.outfit, weight = FontWeight.SemiBold),
+        Font(R.font.outfit, weight = FontWeight.Bold),
+        Font(R.font.outfit, weight = FontWeight.ExtraBold),
+    )
 
     /**
      * Inter as a variable font: one bundled file covering the whole weight axis, with the

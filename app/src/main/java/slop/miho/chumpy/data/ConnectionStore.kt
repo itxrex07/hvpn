@@ -43,6 +43,24 @@ data class ConnectionSettings(
      * everything again. The core reads it fresh off disk when a tunnel starts.
      */
     val bypassLan: Boolean = true,
+    /** Block system traffic when VPN drops unexpectedly. */
+    val killSwitch: Boolean = true,
+    /** Automatically connect on untrusted Wi-Fi networks. */
+    val autoConnectUntrustedWifi: Boolean = false,
+    /** Start VPN tunnel on device boot. */
+    val startOnBoot: Boolean = false,
+    /** Bypass domestic sites (geosite:pk -> direct). */
+    val bypassDomestic: Boolean = true,
+    /** Block ads & trackers (geosite:category-ads-all -> block). */
+    val blockAds: Boolean = false,
+    /** Selected DNS provider label (e.g. "DoH · 1.1.1.1"). */
+    val dnsProvider: String = "DoH · 1.1.1.1",
+    /** TLS Fragmentation & Mux settings. */
+    val fragmentEnabled: Boolean = false,
+    val fragmentLength: String = "100-200",
+    val fragmentInterval: String = "10-20",
+    val muxEnabled: Boolean = false,
+    val muxConcurrency: Int = 8,
 )
 
 object ConnectionStore {
@@ -90,6 +108,17 @@ object ConnectionStore {
             perAppEnabled = json.optBoolean(KEY_PER_APP, true),
             autoReconnect = json.optBoolean(KEY_AUTO_RECONNECT, false),
             bypassLan = json.optBoolean(KEY_BYPASS_LAN, true),
+            killSwitch = json.optBoolean(KEY_KILL_SWITCH, true),
+            autoConnectUntrustedWifi = json.optBoolean(KEY_AUTO_CONNECT_WIFI, false),
+            startOnBoot = json.optBoolean(KEY_START_ON_BOOT, false),
+            bypassDomestic = json.optBoolean(KEY_BYPASS_DOMESTIC, true),
+            blockAds = json.optBoolean(KEY_BLOCK_ADS, false),
+            dnsProvider = json.optString(KEY_DNS_PROVIDER).ifBlank { "DoH · 1.1.1.1" },
+            fragmentEnabled = json.optBoolean(KEY_FRAGMENT_ENABLED, false),
+            fragmentLength = json.optString(KEY_FRAGMENT_LENGTH).ifBlank { "100-200" },
+            fragmentInterval = json.optString(KEY_FRAGMENT_INTERVAL).ifBlank { "10-20" },
+            muxEnabled = json.optBoolean(KEY_MUX_ENABLED, false),
+            muxConcurrency = json.optInt(KEY_MUX_CONCURRENCY, 8),
         )
     }.getOrElse { read(context) }
 
@@ -117,6 +146,17 @@ object ConnectionStore {
             .put(KEY_PER_APP, settings.perAppEnabled)
             .put(KEY_AUTO_RECONNECT, settings.autoReconnect)
             .put(KEY_BYPASS_LAN, settings.bypassLan)
+            .put(KEY_KILL_SWITCH, settings.killSwitch)
+            .put(KEY_AUTO_CONNECT_WIFI, settings.autoConnectUntrustedWifi)
+            .put(KEY_START_ON_BOOT, settings.startOnBoot)
+            .put(KEY_BYPASS_DOMESTIC, settings.bypassDomestic)
+            .put(KEY_BLOCK_ADS, settings.blockAds)
+            .put(KEY_DNS_PROVIDER, settings.dnsProvider)
+            .put(KEY_FRAGMENT_ENABLED, settings.fragmentEnabled)
+            .put(KEY_FRAGMENT_LENGTH, settings.fragmentLength)
+            .put(KEY_FRAGMENT_INTERVAL, settings.fragmentInterval)
+            .put(KEY_MUX_ENABLED, settings.muxEnabled)
+            .put(KEY_MUX_CONCURRENCY, settings.muxConcurrency)
         AtomicSnapshot.write(snapshot(context), json.toString())
     }
 
@@ -142,6 +182,20 @@ object ConnectionStore {
             perAppEnabled = prefs.getBoolean(KEY_PER_APP, true),
             autoReconnect = prefs.getBoolean(KEY_AUTO_RECONNECT, false),
             bypassLan = prefs.getBoolean(KEY_BYPASS_LAN, true),
+            killSwitch = prefs.getBoolean(KEY_KILL_SWITCH, true),
+            autoConnectUntrustedWifi = prefs.getBoolean(KEY_AUTO_CONNECT_WIFI, false),
+            startOnBoot = prefs.getBoolean(KEY_START_ON_BOOT, false),
+            bypassDomestic = prefs.getBoolean(KEY_BYPASS_DOMESTIC, true),
+            blockAds = prefs.getBoolean(KEY_BLOCK_ADS, false),
+            dnsProvider = prefs.getString(KEY_DNS_PROVIDER, null)?.takeIf { it.isNotBlank() }
+                ?: "DoH · 1.1.1.1",
+            fragmentEnabled = prefs.getBoolean(KEY_FRAGMENT_ENABLED, false),
+            fragmentLength = prefs.getString(KEY_FRAGMENT_LENGTH, null)?.takeIf { it.isNotBlank() }
+                ?: "100-200",
+            fragmentInterval = prefs.getString(KEY_FRAGMENT_INTERVAL, null)?.takeIf { it.isNotBlank() }
+                ?: "10-20",
+            muxEnabled = prefs.getBoolean(KEY_MUX_ENABLED, false),
+            muxConcurrency = prefs.getInt(KEY_MUX_CONCURRENCY, 8),
         )
     }
 
@@ -165,6 +219,17 @@ object ConnectionStore {
             .putBoolean(KEY_PER_APP, settings.perAppEnabled)
             .putBoolean(KEY_AUTO_RECONNECT, settings.autoReconnect)
             .putBoolean(KEY_BYPASS_LAN, settings.bypassLan)
+            .putBoolean(KEY_KILL_SWITCH, settings.killSwitch)
+            .putBoolean(KEY_AUTO_CONNECT_WIFI, settings.autoConnectUntrustedWifi)
+            .putBoolean(KEY_START_ON_BOOT, settings.startOnBoot)
+            .putBoolean(KEY_BYPASS_DOMESTIC, settings.bypassDomestic)
+            .putBoolean(KEY_BLOCK_ADS, settings.blockAds)
+            .putString(KEY_DNS_PROVIDER, settings.dnsProvider)
+            .putBoolean(KEY_FRAGMENT_ENABLED, settings.fragmentEnabled)
+            .putString(KEY_FRAGMENT_LENGTH, settings.fragmentLength)
+            .putString(KEY_FRAGMENT_INTERVAL, settings.fragmentInterval)
+            .putBoolean(KEY_MUX_ENABLED, settings.muxEnabled)
+            .putInt(KEY_MUX_CONCURRENCY, settings.muxConcurrency)
             .apply()
     }
 
@@ -177,4 +242,15 @@ object ConnectionStore {
     private const val KEY_PER_APP = "per_app_enabled"
     private const val KEY_AUTO_RECONNECT = "auto_reconnect"
     private const val KEY_BYPASS_LAN = "bypass_lan"
+    private const val KEY_KILL_SWITCH = "kill_switch"
+    private const val KEY_AUTO_CONNECT_WIFI = "auto_connect_wifi"
+    private const val KEY_START_ON_BOOT = "start_on_boot"
+    private const val KEY_BYPASS_DOMESTIC = "bypass_domestic"
+    private const val KEY_BLOCK_ADS = "block_ads"
+    private const val KEY_DNS_PROVIDER = "dns_provider"
+    private const val KEY_FRAGMENT_ENABLED = "fragment_enabled"
+    private const val KEY_FRAGMENT_LENGTH = "fragment_length"
+    private const val KEY_FRAGMENT_INTERVAL = "fragment_interval"
+    private const val KEY_MUX_ENABLED = "mux_enabled"
+    private const val KEY_MUX_CONCURRENCY = "mux_concurrency"
 }

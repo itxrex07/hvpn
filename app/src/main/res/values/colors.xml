@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- The classic launcher icon: the flat sky-colored art on plain white. -->
-    <color name="ic_launcher_background">#FFFFFF</color>
-    <!-- The inverted variant's whole background: the art's own sky color. -->
-    <color name="ic_launcher_background_sky">#6FACED</color>
-    <!-- The dark variant's whole background: a near-black night sky. -->
-    <color name="ic_launcher_background_dark">#191919</color>
-    <color name="window_background">#FEF7FF</color>
+    <!-- Kiran VPN launcher icon background: deep forest night #0E1512 -->
+    <color name="ic_launcher_background">#0E1512</color>
+    <!-- Inverted variant background: mint #86E3B0 -->
+    <color name="ic_launcher_background_sky">#86E3B0</color>
+    <!-- Dark variant background: deep indigo night #0B0B10 -->
+    <color name="ic_launcher_background_dark">#0B0B10</color>
+    <color name="window_background">#0E1512</color>
 </resources>
