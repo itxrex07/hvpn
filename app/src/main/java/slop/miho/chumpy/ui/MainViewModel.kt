@@ -42,13 +42,16 @@ import slop.miho.chumpy.ChumpyApp
 import slop.miho.chumpy.Graph
 import slop.miho.chumpy.R
 import slop.miho.chumpy.core.CoreConfigFile
+import slop.miho.chumpy.core.SmartSwitchEngine
 import slop.miho.chumpy.core.TunnelState
 import slop.miho.chumpy.core.TunnelStatus
 import slop.miho.chumpy.core.UpdateIntents
 import slop.miho.chumpy.core.UpdateNotifier
 import slop.miho.chumpy.core.UpdateRequests
+import slop.miho.chumpy.data.BackupManager
 import slop.miho.chumpy.data.ConnectionSettings
 import slop.miho.chumpy.data.ConnectionStore
+import slop.miho.chumpy.data.CustomRoutingRule
 import slop.miho.chumpy.data.DailyTraffic
 import slop.miho.chumpy.data.DailyTrafficStore
 import slop.miho.chumpy.ui.components.splitLeadingFlag
@@ -56,6 +59,7 @@ import slop.miho.chumpy.data.SettingsStore
 import slop.miho.chumpy.data.ServersSort
 import slop.miho.chumpy.data.UiSettings
 import slop.miho.chumpy.data.comparator
+import slop.miho.chumpy.sub.LinkSerializer
 import slop.miho.chumpy.sub.UpdateCheck
 import slop.miho.chumpy.sub.UpdatePrefs
 import slop.miho.chumpy.sub.UpdateRelease
@@ -430,9 +434,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             before.fragmentEnabled != after.fragmentEnabled ||
             before.fragmentLength != after.fragmentLength ||
             before.fragmentInterval != after.fragmentInterval ||
+            before.fragmentPackets != after.fragmentPackets ||
+            before.fragmentMaxSplit != after.fragmentMaxSplit ||
             before.muxEnabled != after.muxEnabled ||
-            before.muxConcurrency != after.muxConcurrency
-        // A routing, DNS, fragment or mux change rewrites the running config; the tunnel reloads in place.
+            before.muxConcurrency != after.muxConcurrency ||
+            before.muxXudpConcurrency != after.muxXudpConcurrency ||
+            before.muxXudpQuic != after.muxXudpQuic ||
+            before.lanSharingEnabled != after.lanSharingEnabled ||
+            before.socksPort != after.socksPort ||
+            before.httpPort != after.httpPort ||
+            before.socksUsername != after.socksUsername ||
+            before.socksPassword != after.socksPassword ||
+            before.fakednsEnabled != after.fakednsEnabled ||
+            before.localDnsEnabled != after.localDnsEnabled ||
+            before.domainStrategy != after.domainStrategy ||
+            before.remoteDns != after.remoteDns ||
+            before.domesticDns != after.domesticDns ||
+            before.customRoutingRulesJson != after.customRoutingRulesJson
+        // A routing, DNS, fragment, mux, proxy port or rule change rewrites the running config; the tunnel reloads in place.
         if (configChanged &&
             tunnelStatus.value.state in setOf(TunnelState.UP, TunnelState.CONNECTING)) {
             applyConfigAndConnect()
@@ -448,18 +467,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     @Volatile private var sweepGeneration = 0L
     private val pingSemaphore = Semaphore(MAX_PING_CONCURRENCY)
 
+    private val smartSwitch = SmartSwitchEngine()
+    private val _smartSwitchNotice = MutableStateFlow<String?>(null)
+    val smartSwitchNotice: StateFlow<String?> = _smartSwitchNotice.asStateFlow()
+
+    fun dismissSmartSwitchNotice() {
+        _smartSwitchNotice.value = null
+    }
+
 
     init {
-        // The app filter lives outside the config — it rides the TUN interface itself —
-        // so a change to it asks for a full restart rather than a reload. The store
-        // itself is watched, so changes made outside updateConnection (the per-app
-        // screen writes its own) ride the same path.
+        // The app filter and TUN geometry live outside the Xray config — so a change
+        // asks for a full restart rather than just a config swap.
         var previous = connection.value
         viewModelScope.launch {
             connection.drop(1).collect { current ->
-                val bypassChanged = previous.bypassedApps != current.bypassedApps ||
-                    previous.perAppEnabled != current.perAppEnabled || previous.bypassLan != current.bypassLan
-                if (bypassChanged && tunnelStatus.value.state in setOf(TunnelState.UP, TunnelState.CONNECTING)) {
+                val tunOrBypassChanged = previous.bypassedApps != current.bypassedApps ||
+                    previous.perAppEnabled != current.perAppEnabled ||
+                    previous.bypassLan != current.bypassLan ||
+                    previous.proxyOnlyMode != current.proxyOnlyMode ||
+                    previous.ipv6Enabled != current.ipv6Enabled ||
+                    previous.tunMtu != current.tunMtu
+                if (tunOrBypassChanged && tunnelStatus.value.state in setOf(TunnelState.UP, TunnelState.CONNECTING)) {
                     applyConfigAndConnect()
                 }
                 previous = current
@@ -791,26 +820,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         emptyList()
                     }
-                    val config = repository.prepareGeodata(resolvedProfile, XrayConfigBuilder.buildFull(
-                        resolvedProfile,
-                        requestedConnection.routingMode,
-                        members,
-                        requestedConnection.delayTestUrl,
-                        bypassDomestic = requestedConnection.bypassDomestic,
-                        blockAds = requestedConnection.blockAds,
-                        dnsProvider = requestedConnection.dnsProvider,
-                        fragmentEnabled = requestedConnection.fragmentEnabled,
-                        fragmentLength = requestedConnection.fragmentLength,
-                        fragmentInterval = requestedConnection.fragmentInterval,
-                        muxEnabled = requestedConnection.muxEnabled,
-                        muxConcurrency = requestedConnection.muxConcurrency,
-                    ), requestedConnection.blockAds || (requestedConnection.routingMode == RoutingMode.GLOBAL && resolvedProfile.routingRules.isNotBlank()))
+                    val chainParent = resolvedProfile.dialerProxyId
+                        .takeIf { it.isNotBlank() && it != resolvedProfile.id }
+                        ?.let { repository.profileById(it) }
+                    val customRules = CustomRoutingRule.listFromJson(requestedConnection.customRoutingRulesJson)
+                    val builtConfig = buildXrayConfig(
+                        profile = resolvedProfile,
+                        settings = requestedConnection,
+                        members = members,
+                        chainParent = chainParent,
+                        customRules = customRules,
+                    )
+                    val needsImportedGeo = requestedConnection.blockAds ||
+                        customRules.any { it.enabled && (it.pattern.contains("geoip:", true) || it.pattern.contains("geosite:", true)) } ||
+                        (requestedConnection.routingMode == RoutingMode.GLOBAL && resolvedProfile.routingRules.isNotBlank())
+                    val config = repository.prepareGeodata(resolvedProfile, builtConfig, needsImportedGeo)
                     val subscriptionName = resolvedProfile.subscriptionId?.let { repository.subscriptionById(it)?.name }
                     currentCoroutineContext().ensureActive()
                     val requestContext = currentCoroutineContext()
                     synchronized(CoreConfigFile) {
                         requestContext.ensureActive()
                         if (generation == connectGeneration.get()) {
+                            smartSwitch.reset()
                             CoreConfigFile.write(app, config,
                                 resolvedProfile.remarks.ifEmpty { if (settings.value.maskAddresses) "" else resolvedProfile.server },
                                 subscriptionName, resolvedProfile.id, resolvedProfile.subscriptionId, resolvedProfile.server)
@@ -1099,12 +1130,218 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Exports all visible server share links as newline-separated text for clipboard sharing. */
     fun exportAllProfiles(): String {
         return _servers.value.profiles
-            .map {
-                it.sourceLink?.takeIf { link -> link.isNotBlank() }
-                    ?: "${it.type.name.lowercase()}://${it.server}:${it.serverPort}#${it.remarks}"
-            }
+            .mapNotNull { LinkSerializer.toShareUri(it).takeIf { uri -> uri.isNotBlank() } }
             .joinToString("\n")
     }
+
+    /** Creates or updates a manual server / custom JSON / policy group profile. */
+    fun upsertManualProfile(profile: ProfileEntity, onDone: (String?) -> Unit = {}) {
+        val firstConfigEver = appIsEmpty()
+        viewModelScope.launch {
+            runCatching {
+                val saved = repository.upsertProfile(profile)
+                val targetSub = saved.subscriptionId ?: STANDALONE_SUBSCRIPTION_ID
+                ConnectionStore.update(app) { it.copy(selectedSubscriptionId = targetSub, selectedProfileId = saved.id) }
+                maybeAskNotifications(firstConfigEver)
+                if (connection.value.selectedProfileId == saved.id &&
+                    tunnelStatus.value.state in setOf(TunnelState.UP, TunnelState.CONNECTING)) {
+                    applyConfigAndConnect(saved)
+                }
+                saved
+            }.onSuccess {
+                _servers.update { it.copy(error = null) }
+                onDone(null)
+            }.onFailure { err ->
+                val msg = err.message ?: app.getString(R.string.error_unknown)
+                _servers.update { it.copy(error = msg) }
+                onDone(msg)
+            }
+        }
+    }
+
+    /** Updates editable subscription properties (name, URL, regex filter, custom UA, interval) and optionally refreshes. */
+    fun updateSubscriptionEditable(
+        id: String,
+        name: String,
+        url: String,
+        filterRegex: String,
+        customUserAgent: String,
+        updateIntervalMinutes: Int?,
+        autoUpdate: Boolean,
+        refreshAfter: Boolean = true,
+    ) {
+        viewModelScope.launch {
+            repository.updateSubscriptionEditable(
+                id = id,
+                name = name,
+                url = url,
+                filterRegex = filterRegex,
+                customUserAgent = customUserAgent,
+                updateIntervalMinutes = updateIntervalMinutes,
+                autoUpdate = autoUpdate,
+            )
+            if (refreshAfter) {
+                updateSubscription(id)
+            }
+        }
+    }
+
+    /** Measures single-stream download throughput in Mbps via throwaway SOCKS probe. */
+    fun testProfileSpeed(profile: ProfileEntity, onResult: (Double?) -> Unit = {}) {
+        if (profile.type == ProfileType.BALANCER) {
+            onResult(null)
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val mbps = runCatching {
+                val port = java.net.ServerSocket(0).use { it.localPort }
+                val config = XrayConfigBuilder.buildThroughputTest(profile, port)
+                tunnelClient.measureThroughput(config, port)
+            }.getOrNull()
+            repository.setProfileSpeed(profile.id, mbps, System.currentTimeMillis())
+            withContext(Dispatchers.Main) { onResult(mbps) }
+        }
+    }
+
+    fun testSelectedSpeed(onResult: (Double?) -> Unit = {}) {
+        val profile = selectedProfile.value ?: return onResult(null)
+        testProfileSpeed(profile, onResult)
+    }
+
+    /** Builds full Xray JSON config string for inspection / export. */
+    suspend fun buildFullJsonForProfile(profile: ProfileEntity): String = withContext(Dispatchers.IO) {
+        val conn = connection.value
+        val members = if (profile.type == ProfileType.BALANCER) {
+            val keys = profile.balancerMemberKeys.toSet()
+            val rows = repository.profilesOf(profile.subscriptionId).first()
+            rows.filter { it.type != ProfileType.BALANCER && it.linkKey in keys }
+                .ifEmpty { rows.filter { it.type != ProfileType.BALANCER } }
+        } else {
+            emptyList()
+        }
+        val chainParent = profile.dialerProxyId.takeIf { it.isNotBlank() && it != profile.id }
+            ?.let { repository.profileById(it) }
+        val customRules = CustomRoutingRule.listFromJson(conn.customRoutingRulesJson)
+        buildXrayConfig(profile, conn, members, chainParent, customRules)
+    }
+
+    /** Handles external deep links (`vless://`, `vmess://`, ..., `v2rayng://install-config?url=...`). */
+    fun handleIncomingUri(rawUri: String?) {
+        val trimmed = rawUri?.trim().orEmpty()
+        if (trimmed.isEmpty()) return
+        val extracted = if (trimmed.startsWith("v2rayng://", ignoreCase = true)) {
+            val parsed = runCatching { Uri.parse(trimmed) }.getOrNull()
+            parsed?.getQueryParameter("url")?.trim()?.takeIf { it.isNotEmpty() }
+                ?: parsed?.getQueryParameter("sub")?.trim()?.takeIf { it.isNotEmpty() }
+                ?: trimmed
+        } else {
+            trimmed
+        }
+        addSubscription(extracted, null) {}
+    }
+
+    fun exportBackupZip(uri: Uri, onResult: (Result<Int>) -> Unit) {
+        viewModelScope.launch {
+            val result = runCatching {
+                val subs = repository.allSubscriptionsOnce()
+                val profiles = repository.allProfilesOnce()
+                BackupManager.exportToUri(app, uri, subs, profiles).getOrThrow()
+            }
+            onResult(result)
+        }
+    }
+
+    fun importBackupZip(uri: Uri, onResult: (Result<Int>) -> Unit) {
+        viewModelScope.launch {
+            val result = runCatching {
+                val payload = BackupManager.importFromUri(app, uri).getOrThrow()
+                repository.restoreBackupData(payload.subscriptions, payload.profiles)
+                BackupManager.applySettingsFromBackup(app, payload)
+                payload.profiles.size
+            }
+            onResult(result)
+        }
+    }
+
+    fun uploadWebDav(onResult: (Result<Int>) -> Unit) {
+        val conn = connection.value
+        viewModelScope.launch {
+            val result = runCatching {
+                val subs = repository.allSubscriptionsOnce()
+                val profiles = repository.allProfilesOnce()
+                BackupManager.uploadWebDav(
+                    context = app,
+                    url = conn.webdavUrl,
+                    username = conn.webdavUser,
+                    password = conn.webdavPass,
+                    subscriptions = subs,
+                    profiles = profiles,
+                    tunnelUp = tunnelStatus.value.state == TunnelState.UP,
+                    socksPort = conn.socksPort,
+                ).getOrThrow()
+            }
+            onResult(result)
+        }
+    }
+
+    fun downloadWebDav(onResult: (Result<Int>) -> Unit) {
+        val conn = connection.value
+        viewModelScope.launch {
+            val result = runCatching {
+                val payload = BackupManager.downloadWebDav(
+                    url = conn.webdavUrl,
+                    username = conn.webdavUser,
+                    password = conn.webdavPass,
+                    tunnelUp = tunnelStatus.value.state == TunnelState.UP,
+                    socksPort = conn.socksPort,
+                ).getOrThrow()
+                repository.restoreBackupData(payload.subscriptions, payload.profiles)
+                BackupManager.applySettingsFromBackup(app, payload)
+                payload.profiles.size
+            }
+            onResult(result)
+        }
+    }
+
+    private fun buildXrayConfig(
+        profile: ProfileEntity,
+        settings: ConnectionSettings,
+        members: List<ProfileEntity>,
+        chainParent: ProfileEntity?,
+        customRules: List<CustomRoutingRule>,
+    ): String = XrayConfigBuilder.buildFull(
+        profile = profile,
+        mode = settings.routingMode,
+        members = members,
+        testUrl = settings.delayTestUrl,
+        bypassDomestic = settings.bypassDomestic,
+        blockAds = settings.blockAds,
+        dnsProvider = settings.dnsProvider,
+        fragmentEnabled = settings.fragmentEnabled,
+        fragmentLength = settings.fragmentLength,
+        fragmentInterval = settings.fragmentInterval,
+        muxEnabled = settings.muxEnabled,
+        muxConcurrency = settings.muxConcurrency,
+        chainParent = chainParent,
+        ipv6Enabled = settings.ipv6Enabled,
+        tunMtu = settings.tunMtu,
+        proxyOnlyMode = settings.proxyOnlyMode,
+        lanSharingEnabled = settings.lanSharingEnabled,
+        socksPort = settings.socksPort,
+        httpPort = settings.httpPort,
+        socksUsername = settings.socksUsername,
+        socksPassword = settings.socksPassword,
+        fakednsEnabled = settings.fakednsEnabled,
+        localDnsEnabled = settings.localDnsEnabled,
+        domainStrategy = settings.domainStrategy,
+        remoteDns = settings.remoteDns,
+        domesticDns = settings.domesticDns,
+        fragmentPackets = settings.fragmentPackets,
+        fragmentMaxSplit = settings.fragmentMaxSplit,
+        muxXudpConcurrency = settings.muxXudpConcurrency,
+        muxXudpQuic = settings.muxXudpQuic,
+        customRules = customRules,
+    )
 
     // ------------------------------------------------------------ real pings
 
@@ -1286,6 +1523,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .collect { status ->
                     when (status.state) {
                         TunnelState.UP -> {
+                            smartSwitch.reset()
                             sessionStartMillis = tunnelClient.connectedAtMillis()
                                 ?: System.currentTimeMillis()
                             _stats.update { it.copy(frozenAtMillis = null, connectedMillis = null) }
@@ -1383,6 +1621,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         if (now - lastFlushAtMillis >= DAILY_FLUSH_MILLIS) {
                             refreshDailyTraffic()
                             lastFlushAtMillis = now
+                        }
+                        if (appInForeground && connection.value.smartSwitchEnabled &&
+                            smartSwitch.recordSample(liveDown, liveUp, now)) {
+                            val currentId = _servers.value.selectedProfileId ?: connection.value.selectedProfileId ?: ""
+                            val candidate = SmartSwitchEngine.pickNextCandidate(_servers.value.profiles, currentId)
+                            if (candidate != null) {
+                                withContext(Dispatchers.Main) {
+                                    _smartSwitchNotice.value = "Smart Switch → ${candidate.remarks.ifBlank { candidate.server }}"
+                                    selectProfile(candidate.id)
+                                }
+                            }
                         }
                     }
                     if (traffic != null) lastAtMillis = now

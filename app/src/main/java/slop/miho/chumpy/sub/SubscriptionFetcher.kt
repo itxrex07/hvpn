@@ -71,14 +71,44 @@ class SubscriptionFetcher(
     /**
      * Throws [IOException] with a readable message on failure. The Happ fingerprint,
      * when the settings carry one, takes the UA and the x- headers over from the app's
-     * own identity.
+     * own identity unless a subscription-level [userAgentOverride] is set.
      */
-    suspend fun fetch(rawUrl: String): FetchResult = suspendCancellableCoroutine { continuation ->
+    suspend fun fetch(
+        rawUrl: String,
+        userAgentOverride: String? = null,
+        useCdnMirrors: Boolean = true,
+    ): FetchResult {
+        val normalized = normalizeUrl(rawUrl)
+        val candidates = if (useCdnMirrors) RouteRace.mirrorUrlsFor(normalized) else listOf(normalized)
+        if (candidates.size == 1) {
+            return fetchSingle(candidates.first(), userAgentOverride)
+        }
+        var lastError: Exception? = null
+        val raced = RouteRace.first(candidates) { candidate ->
+            try {
+                fetchSingle(candidate, userAgentOverride)
+            } catch (e: Exception) {
+                lastError = e
+                null
+            }
+        }
+        return raced ?: throw (lastError ?: IOException("All subscription download routes failed"))
+    }
+
+    private suspend fun fetchSingle(
+        targetUrl: String,
+        userAgentOverride: String?,
+    ): FetchResult = suspendCancellableCoroutine { continuation ->
         val client = if (tunnelUp()) tunnelClient else directClient
-        val request = Request.Builder().url(normalizeUrl(rawUrl)).get()
-        val fingerprint = happSpoof()
-        if (fingerprint != null) HappSpoof.headers(fingerprint).forEach { (name, value) -> request.header(name, value) }
-        else request.header("User-Agent", USER_AGENT).header("Accept", "*/*")
+        val request = Request.Builder().url(targetUrl).get()
+        val customUa = userAgentOverride?.trim().orEmpty()
+        if (customUa.isNotEmpty()) {
+            request.header("User-Agent", customUa).header("Accept", "*/*")
+        } else {
+            val fingerprint = happSpoof()
+            if (fingerprint != null) HappSpoof.headers(fingerprint).forEach { (name, value) -> request.header(name, value) }
+            else request.header("User-Agent", USER_AGENT).header("Accept", "*/*")
+        }
         val call = client.newCall(request.build())
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
@@ -105,14 +135,33 @@ class SubscriptionFetcher(
         })
     }
 
-    suspend fun fetchGeodata(url: String, target: java.io.File): Unit = suspendCancellableCoroutine { continuation ->
+    suspend fun fetchGeodata(url: String, target: java.io.File) {
+        val candidates = RouteRace.mirrorUrlsFor(url)
+        if (candidates.size == 1) {
+            fetchGeodataSingle(candidates.first(), target)
+            return
+        }
+        var lastError: Exception? = null
+        val winner = RouteRace.first(candidates) { candidate ->
+            try {
+                fetchGeodataSingle(candidate, target)
+                true
+            } catch (e: Exception) {
+                lastError = e
+                null
+            }
+        }
+        if (winner != true) throw (lastError ?: IOException("Geodata download failed"))
+    }
+
+    private suspend fun fetchGeodataSingle(url: String, target: java.io.File): Unit = suspendCancellableCoroutine { continuation ->
         val parsed = url.toHttpUrlOrNull()
         if (parsed == null || !parsed.isHttps || parsed.username.isNotEmpty() || parsed.password.isNotEmpty()) {
             continuation.resumeWithException(IOException("Geodata requires an HTTPS URL without embedded credentials"))
             return@suspendCancellableCoroutine
         }
         val base = if (tunnelUp()) tunnelClient else directClient
-        val client = base.newBuilder().followSslRedirects(false).callTimeout(45, java.util.concurrent.TimeUnit.SECONDS).build()
+        val client = base.newBuilder().followSslRedirects(false).callTimeout(45, TimeUnit.SECONDS).build()
         val call = client.newCall(Request.Builder().url(parsed).header("User-Agent", USER_AGENT).build())
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {

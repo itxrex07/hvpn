@@ -173,6 +173,11 @@ object XrayCore {
         dir.mkdirs()
         listOf(GEOIP, GEOSITE).forEach { name ->
             val target = File(dir, name)
+            val customMarker = slop.miho.chumpy.data.GeodataManager.customMarkerFile(dir, name)
+            if (customMarker.isFile && target.isFile && target.length() > 0L) {
+                log(Log.INFO, "Preserving custom $name (${target.length()} bytes)")
+                return@forEach
+            }
             appContext.assets.open(name).use { input ->
                 File(dir, "$name.tmp").let { tmp ->
                     tmp.outputStream().use { output -> input.copyTo(output) }
@@ -314,6 +319,37 @@ object XrayCore {
         } catch (e: Exception) {
             log(Log.WARN, "measureLiveDelay failed", e)
             -1L
+        }
+    }
+
+    /** Single-stream throughput probe (Mbps) via a throwaway loopback SOCKS core instance. */
+    fun measureThroughput(configJson: String, socksPort: Int): Double {
+        if (configJson.isBlank() || socksPort !in 1024..65535) return -1.0
+        var probeCore: CoreController? = null
+        return try {
+            awaitInit()
+            initFailed?.let { return -1.0 }
+            val silentHandler = object : CoreCallbackHandler {
+                override fun startup(): Long = 0L
+                override fun shutdown(): Long = 0L
+                override fun onEmitStatus(l: Long, s: String?): Long = 0L
+            }
+            val instance = Libv2ray.newCoreController(silentHandler).also { probeCore = it }
+            instance.startLoop(configJson, 0)
+            Thread.sleep(150L)
+            val proxy = java.net.Proxy(
+                java.net.Proxy.Type.SOCKS,
+                java.net.InetSocketAddress("127.0.0.1", socksPort),
+            )
+            ThroughputProbe.measureMbps(proxy)
+        } catch (e: Exception) {
+            log(Log.WARN, "measureThroughput failed", e)
+            -1.0
+        } finally {
+            try {
+                probeCore?.stopLoop()
+            } catch (_: Exception) {
+            }
         }
     }
 

@@ -170,6 +170,7 @@ class PhoneImportServer internal constructor(
         }
         if (headers["origin"] != origin || headers["x-chumpy-session"] != session) {
             respond(socket, 403, "Invalid session")
+            drainSmallBody(socket, input, headers["content-length"]?.toIntOrNull())
             return
         }
         val authorization = headers["authorization"].orEmpty()
@@ -179,6 +180,7 @@ class PhoneImportServer internal constructor(
             invalidAttempts++
             val locked = invalidAttempts >= 8
             respond(socket, if (locked) 429 else 401, if (locked) "Session locked" else "Invalid code")
+            drainSmallBody(socket, input, headers["content-length"]?.toIntOrNull())
             if (locked) expire()
             return
         }
@@ -236,6 +238,22 @@ class PhoneImportServer internal constructor(
             "X-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\n" +
             "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'\r\n\r\n"
         socket.getOutputStream().apply { write(headers.toByteArray(Charsets.US_ASCII)); write(bytes); flush() }
+        runCatching { socket.shutdownOutput() }
+    }
+
+    private fun drainSmallBody(socket: Socket, input: java.io.InputStream, contentLength: Int?) {
+        val len = contentLength ?: return
+        if (len !in 1..4096) return
+        runCatching {
+            socket.soTimeout = 100
+            val buf = ByteArray(minOf(len, 1024))
+            var remaining = len
+            while (remaining > 0) {
+                val n = input.read(buf, 0, minOf(buf.size, remaining))
+                if (n <= 0) break
+                remaining -= n
+            }
+        }
     }
 
     @Synchronized

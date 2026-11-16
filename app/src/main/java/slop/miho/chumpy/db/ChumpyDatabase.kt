@@ -36,6 +36,21 @@ interface SubscriptionDao {
     @Query("UPDATE subscriptions SET lastUpdateAttempt = :at, lastError = :error WHERE id = :id")
     suspend fun setUpdateError(id: String, at: Long, error: String)
 
+    @Query(
+        "UPDATE subscriptions SET name = :name, url = :url, filterRegex = :filterRegex, " +
+            "customUserAgent = :customUserAgent, updateIntervalMinutes = :updateIntervalMinutes, " +
+            "autoUpdate = :autoUpdate WHERE id = :id",
+    )
+    suspend fun updateEditable(
+        id: String,
+        name: String,
+        url: String,
+        filterRegex: String,
+        customUserAgent: String,
+        updateIntervalMinutes: Int?,
+        autoUpdate: Boolean,
+    )
+
     @Query("DELETE FROM subscriptions WHERE id = :id")
     suspend fun delete(id: String)
 }
@@ -52,6 +67,12 @@ abstract class ProfileDao {
 
     @Query("SELECT * FROM profiles WHERE id = :id")
     abstract suspend fun byId(id: String): ProfileEntity?
+
+    @Query("SELECT * FROM profiles ORDER BY `order`, remarks")
+    abstract suspend fun allOnce(): List<ProfileEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun upsert(profile: ProfileEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     protected abstract suspend fun insertProfiles(profiles: List<ProfileEntity>)
@@ -72,6 +93,9 @@ abstract class ProfileDao {
 
     @Query("UPDATE profiles SET testDelayMillis = :delayMillis, lastTestAt = :testedAt WHERE id = :id")
     abstract suspend fun setDelay(id: String, delayMillis: Long?, testedAt: Long)
+
+    @Query("UPDATE profiles SET speedMbps = :speedMbps, lastTestAt = :testedAt WHERE id = :id")
+    abstract suspend fun setSpeed(id: String, speedMbps: Double?, testedAt: Long)
 
     /** The row's last use — a targeted update, the row's identity untouched. */
     @Query("UPDATE profiles SET lastUsedAt = :usedAt WHERE id = :id")
@@ -100,7 +124,7 @@ abstract class ProfileDao {
  */
 @Database(
     entities = [SubscriptionEntity::class, ProfileEntity::class],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 abstract class ChumpyDatabase : RoomDatabase() {
@@ -234,6 +258,17 @@ abstract class ChumpyDatabase : RoomDatabase() {
         val MIGRATION_10_11 = object : Migration(10, 11) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE subscriptions ADD COLUMN logoPath TEXT")
+            }
+        }
+
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE profiles ADD COLUMN speedMbps REAL")
+                db.execSQL("ALTER TABLE profiles ADD COLUMN dialerProxyId TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE profiles ADD COLUMN rawConfigJson TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE subscriptions ADD COLUMN filterRegex TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE subscriptions ADD COLUMN customUserAgent TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE subscriptions ADD COLUMN updateIntervalMinutes INTEGER")
             }
         }
 

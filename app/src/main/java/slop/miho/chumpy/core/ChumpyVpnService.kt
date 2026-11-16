@@ -200,6 +200,9 @@ class ChumpyVpnService : VpnService() {
         override fun measureLiveDelay(testUrl: String?): Long =
             XrayCore.measureLiveDelay(testUrl.orEmpty())
 
+        override fun measureThroughput(configJson: String?, socksPort: Int): Double =
+            XrayCore.measureThroughput(configJson.orEmpty(), socksPort)
+
         override fun coreVersion(): String = XrayCore.coreVersion()
 
         override fun coreLogs(): String = XrayCore.coreLogs()
@@ -213,12 +216,21 @@ class ChumpyVpnService : VpnService() {
         }
     }
 
+    private data class TunProfileKey(
+        val perAppEnabled: Boolean,
+        val bypassedApps: Set<String>,
+        val bypassLan: Boolean,
+        val proxyOnlyMode: Boolean,
+        val ipv6Enabled: Boolean,
+        val tunMtu: Int,
+    )
+
     // Read from the connectivity callbacks' thread as well as the worker — the watch's
     // underlying-networks declaration asks whether the interface stands.
     @Volatile
     private var tunInterface: ParcelFileDescriptor? = null
 
-    private var appliedAppFilter: Triple<Boolean, Set<String>, Boolean>? = null
+    private var appliedAppFilter: TunProfileKey? = null
 
     /** All VPN setup/teardown runs here; concurrent commands are collapsed by the lock. */
     private val worker: ExecutorService = Executors.newSingleThreadExecutor { Thread(it, "vpn-worker") }
@@ -295,6 +307,11 @@ class ChumpyVpnService : VpnService() {
         if (destroyed || !watching) return@Runnable
         worker.execute {
             if (!watching || !XrayCore.isRunning) return@execute
+            val proxyOnly = ConnectionStore.current(this).proxyOnlyMode
+            if (proxyOnly) {
+                mainHandler.postDelayed(authorizationCheck, AUTHORIZATION_CHECK_MILLIS)
+                return@execute
+            }
             // The foreign VPN is asked first: while it holds the system, prepare() keeps
             // answering null on this ROM, and it is our own interface teardown — not the
             // consent — that would take the newcomer down with us.
@@ -454,14 +471,26 @@ class ChumpyVpnService : VpnService() {
             // A new attempt supersedes whatever fall the last one announced.
             cancelAlert()
             try {
-                if (prepare(this) != null) {
+                val connection = ConnectionStore.current(this)
+                if (!connection.proxyOnlyMode && prepare(this) != null) {
                     throw SecurityException(getString(R.string.error_vpn_not_authorized))
                 }
                 val config = CoreConfigFile.readConfig(this)
                     ?: throw IllegalStateException(getString(R.string.error_no_config))
-                val connection = ConnectionStore.current(this)
-                val appFilter = Triple(connection.perAppEnabled, connection.bypassedApps, connection.bypassLan)
-                if (XrayCore.isRunning && appliedAppFilter == appFilter) {
+                val tunKey = TunProfileKey(
+                    perAppEnabled = connection.perAppEnabled,
+                    bypassedApps = connection.bypassedApps,
+                    bypassLan = connection.bypassLan,
+                    proxyOnlyMode = connection.proxyOnlyMode,
+                    ipv6Enabled = connection.ipv6Enabled,
+                    tunMtu = connection.tunMtu.coerceIn(1280, 9000),
+                )
+                if (tunKey.proxyOnlyMode) {
+                    XrayCore.stopLoop()
+                    closeTun()
+                    closeKeptTun()
+                    XrayCore.startLoop(config, 0)?.let { throw it }
+                } else if (XrayCore.isRunning && appliedAppFilter == tunKey && tunInterface != null) {
                     // Reload: the interface stays up, only the core loop restarts with the
                     // fresh config — server switch while connected.
                     XrayCore.stopLoop()
@@ -472,12 +501,16 @@ class ChumpyVpnService : VpnService() {
                     // The interface a soft fall kept standing retires here, right before
                     // its replacement — never standing alone, never mid-fall.
                     closeKeptTun()
-                    val tun = establishTun(appFilter.first to appFilter.second, appFilter.third)
-                        ?: throw IllegalStateException(getString(R.string.error_tun_creation))
+                    val tun = establishTun(
+                        appFilter = tunKey.perAppEnabled to tunKey.bypassedApps,
+                        bypassLan = tunKey.bypassLan,
+                        ipv6Enabled = tunKey.ipv6Enabled,
+                        tunMtu = tunKey.tunMtu,
+                    ) ?: throw IllegalStateException(getString(R.string.error_tun_creation))
                     tunInterface = tun
                     XrayCore.startLoop(config, tun.fd)?.let { throw it }
                 }
-                appliedAppFilter = appFilter
+                appliedAppFilter = tunKey
                 if (generation != commandGeneration.get()) return@execute
                 XrayCore.publish(TunnelStatus(TunnelState.UP))
                 // The guards ride with the running tunnel: handovers under it re-dial it,
@@ -666,15 +699,25 @@ class ChumpyVpnService : VpnService() {
         }
     }
 
-    private fun establishTun(appFilter: Pair<Boolean, Set<String>>, bypassLan: Boolean): ParcelFileDescriptor? {
+    private fun establishTun(
+        appFilter: Pair<Boolean, Set<String>>,
+        bypassLan: Boolean,
+        ipv6Enabled: Boolean = false,
+        tunMtu: Int = TUN_MTU,
+    ): ParcelFileDescriptor? {
         val builder = Builder()
-            .setMtu(TUN_MTU)
+            .setMtu(tunMtu.coerceIn(1280, 9000))
             .addAddress(TUN_ADDRESS, TUN_PREFIX)
             .apply {
                 if (bypassLan) {
                     ROUTED_IP_BLOCKS.forEach { (address, prefix) -> addRoute(address, prefix) }
                 } else {
                     addRoute("0.0.0.0", 0)
+                }
+                if (ipv6Enabled) {
+                    addAddress("fd00::1", 126)
+                    addRoute("::", 0)
+                    addDnsServer("2606:4700:4700::1111")
                 }
             }
             .addDnsServer("1.1.1.1")

@@ -33,7 +33,7 @@ object ConfigParser {
     private const val REALITY = "reality"
 
     /** The protocols that mark a real proxy outbound; everything else is plumbing. */
-    private val PROXY_PROTOCOLS = setOf("vless", "vmess", "trojan", "shadowsocks", "socks", "hysteria", "wireguard")
+    private val PROXY_PROTOCOLS = setOf("vless", "vmess", "trojan", "shadowsocks", "socks", "http", "hysteria", "wireguard")
 
     /** The strategies this core runs, normalized to the names it switches on. */
     private val STRATEGIES = setOf("random", "roundrobin", "leastping", "leastload")
@@ -214,6 +214,7 @@ object ConfigParser {
             "trojan" -> ProfileType.TROJAN
             "shadowsocks" -> ProfileType.SHADOWSOCKS
             "socks" -> ProfileType.SOCKS
+            "http" -> ProfileType.HTTP
             "hysteria" -> ProfileType.HYSTERIA2
             "wireguard" -> ProfileType.WIREGUARD
             else -> return null
@@ -274,7 +275,7 @@ object ConfigParser {
                 password = endpoint?.str("password") ?: settings.str("password").orEmpty(),
             )
 
-            ProfileType.SOCKS -> profile = profile.copy(
+            ProfileType.SOCKS, ProfileType.HTTP -> profile = profile.copy(
                 username = user?.str("user") ?: settings.str("user").orEmpty(),
                 password = user?.str("pass") ?: settings.str("pass").orEmpty(),
             )

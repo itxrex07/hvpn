@@ -113,6 +113,19 @@ class TunnelClient(private val context: Context) {
         }
     }
 
+    /**
+     * Measures real download throughput in Mbps through [configJson] on loopback [socksPort].
+     * Blocking — call from Dispatchers.IO. Null when failed or unreachable.
+     */
+    fun measureThroughput(configJson: String, socksPort: Int): Double? {
+        val remote = service ?: return null
+        return try {
+            remote.measureThroughput(configJson, socksPort).takeIf { it > 0.0 }
+        } catch (_: RemoteException) {
+            null
+        }
+    }
+
     /** The Xray core version, or null while the core process is unreachable. */
     fun coreVersion(): String? {
         val remote = service ?: return null

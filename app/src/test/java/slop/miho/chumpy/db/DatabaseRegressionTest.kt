@@ -135,13 +135,13 @@ class DatabaseRegressionTest {
         sql.beginTransaction()
         try {
             ChumpyDatabase.MIGRATION_2_3.migrate(sql)
-            // The rebuild lands the table in its v3 shape; the pin came later (v8) and
-            // the logo path later still (v11) — the same steps the real chain runs
-            // next, restoring the shape the DAOs read. The profiles' own v8 step stays
-            // out: the fresh database already wears its column, and the rebuild's
-            // backup carried it over.
+            // The rebuild lands the table in its v3 shape; the pin came later (v8),
+            // logo path at v11, and filter/UA/interval at v12 — restoring the shape the DAOs read.
             sql.execSQL("ALTER TABLE subscriptions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
             sql.execSQL("ALTER TABLE subscriptions ADD COLUMN logoPath TEXT")
+            sql.execSQL("ALTER TABLE subscriptions ADD COLUMN filterRegex TEXT NOT NULL DEFAULT ''")
+            sql.execSQL("ALTER TABLE subscriptions ADD COLUMN customUserAgent TEXT NOT NULL DEFAULT ''")
+            sql.execSQL("ALTER TABLE subscriptions ADD COLUMN updateIntervalMinutes INTEGER")
             sql.setTransactionSuccessful()
         } finally {
             sql.endTransaction()
@@ -179,4 +179,23 @@ class DatabaseRegressionTest {
         } finally { database.close() }
     }
 
+    @Test fun `v12 subscription filter and manual profile chaining fields persist cleanly`() = runBlocking {
+        db.subscriptionDao().updateEditable(
+            id = "sub",
+            name = "Filtered",
+            url = "https://example.com/sub",
+            filterRegex = "HK|JP\n!Expired",
+            customUserAgent = "v2rayNG/1.9",
+            updateIntervalMinutes = 30,
+            autoUpdate = true,
+        )
+        val updatedSub = db.subscriptionDao().byId("sub")!!
+        assertEquals("HK|JP\n!Expired", updatedSub.filterRegex)
+        assertEquals("v2rayNG/1.9", updatedSub.customUserAgent)
+        assertEquals(30, updatedSub.updateIntervalMinutes)
+
+        db.profileDao().setSpeed("profile", 48.5, 999L)
+        val updatedProfile = db.profileDao().byId("profile")!!
+        assertEquals(48.5, updatedProfile.speedMbps!!, 0.01)
+    }
 }

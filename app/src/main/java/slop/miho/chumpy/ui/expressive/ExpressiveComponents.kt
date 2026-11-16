@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,8 +54,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -580,8 +583,10 @@ fun formatProfileProtocolLine(profile: ProfileEntity, uppercase: Boolean = false
         ProfileType.TROJAN -> "Trojan"
         ProfileType.SHADOWSOCKS -> "Shadowsocks"
         ProfileType.SOCKS -> "SOCKS"
+        ProfileType.HTTP -> "HTTP"
         ProfileType.WIREGUARD -> "WireGuard"
         ProfileType.HYSTERIA2 -> "Hysteria2"
+        ProfileType.CUSTOM_JSON -> "Custom JSON"
         ProfileType.BALANCER -> "Balancer"
     }
     val transport = when (profile.network.lowercase()) {
@@ -673,8 +678,16 @@ fun ExpressiveServersTab(
     onDeleteSelected: (Set<String>) -> Unit,
     onExportAll: () -> String,
     onDeleteAll: () -> Unit,
+    onNewServer: () -> Unit = {},
+    onNewPolicyGroup: () -> Unit = {},
+    onEditProfile: (ProfileEntity) -> Unit = {},
+    onShareOrQr: (ProfileEntity) -> Unit = {},
+    onTestSpeed: (ProfileEntity) -> Unit = {},
+    onEditSubscription: (SubscriptionEntity) -> Unit = {},
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val listState = rememberLazyListState()
     var showMenu by rememberSaveable { mutableStateOf(false) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -943,6 +956,14 @@ fun ExpressiveServersTab(
                                     modifier = Modifier.clickable { onUpdateSubscription() },
                                 )
                                 Text(
+                                    text = "✎",
+                                    fontFamily = OutfitFont,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = onPrimaryColor,
+                                    modifier = Modifier.clickable { onEditSubscription(sub) },
+                                )
+                                Text(
                                     text = "×",
                                     fontFamily = OutfitFont,
                                     fontWeight = FontWeight.ExtraBold,
@@ -1085,6 +1106,7 @@ fun ExpressiveServersTab(
                     }
                 } else {
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                         contentPadding = PaddingValues(bottom = 88.dp),
@@ -1238,6 +1260,15 @@ fun ExpressiveServersTab(
                                                 fontSize = 13.sp,
                                                 color = pingColor,
                                             )
+                                            profile.speedMbps?.takeIf { it > 0.0 }?.let { mbps ->
+                                                Text(
+                                                    text = String.format(Locale.US, "%.1f Mbps", mbps),
+                                                    fontFamily = OutfitFont,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    fontSize = 11.sp,
+                                                    color = accentLight,
+                                                )
+                                            }
 
                                             Row(
                                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1284,53 +1315,80 @@ fun ExpressiveServersTab(
                                         }
                                     }
 
-                                    // Per-server expandable action strip (Pin, Hide, Copy Link, Delete)
+                                    // Per-server expandable action strip (Edit, QR/JSON, Speed, Pin, Hide, Delete)
                                     AnimatedVisibility(visible = cardMenuExpanded) {
-                                        Row(
+                                        Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .padding(top = 12.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp),
                                         ) {
-                                            ServerCardActionChip(
-                                                label = if (profile.pinned) "Unpin" else "Pin",
-                                                bg = pillBg,
-                                                fg = textPrimary,
-                                                modifier = Modifier.weight(1f),
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                             ) {
-                                                onToggleProfilePinned(profile.id, !profile.pinned)
-                                                expandedCardMenuId = null
-                                            }
-                                            ServerCardActionChip(
-                                                label = if (profile.concealed) "Unhide" else "Hide",
-                                                bg = pillBg,
-                                                fg = textPrimary,
-                                                modifier = Modifier.weight(1f),
-                                            ) {
-                                                onToggleProfileConcealed(profile.id, !profile.concealed)
-                                                expandedCardMenuId = null
-                                            }
-                                            if (!profile.sourceLink.isNullOrBlank()) {
                                                 ServerCardActionChip(
-                                                    label = "Copy link",
+                                                    label = "Edit",
+                                                    bg = pillBg,
+                                                    fg = textPrimary,
+                                                    modifier = Modifier.weight(1f),
+                                                ) {
+                                                    onEditProfile(profile)
+                                                    expandedCardMenuId = null
+                                                }
+                                                ServerCardActionChip(
+                                                    label = "QR / JSON",
                                                     bg = pillBg,
                                                     fg = accentLight,
                                                     modifier = Modifier.weight(1f),
                                                 ) {
-                                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                                    cm?.setPrimaryClip(ClipData.newPlainText("Hollow VPN Server", profile.sourceLink))
-                                                    statusBanner = "Copied share link to clipboard"
+                                                    onShareOrQr(profile)
                                                     expandedCardMenuId = null
                                                 }
+                                                if (profile.type != ProfileType.BALANCER) {
+                                                    ServerCardActionChip(
+                                                        label = "Speed test",
+                                                        bg = pillBg,
+                                                        fg = textPrimary,
+                                                        modifier = Modifier.weight(1f),
+                                                    ) {
+                                                        statusBanner = "Measuring throughput for ${cleanTitle}…"
+                                                        onTestSpeed(profile)
+                                                        expandedCardMenuId = null
+                                                    }
+                                                }
                                             }
-                                            ServerCardActionChip(
-                                                label = "Delete",
-                                                bg = pillBg,
-                                                fg = dangerColor,
-                                                modifier = Modifier.weight(1f),
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                             ) {
-                                                onDeleteSelected(setOf(profile.id))
-                                                expandedCardMenuId = null
+                                                ServerCardActionChip(
+                                                    label = if (profile.pinned) "Unpin" else "Pin",
+                                                    bg = pillBg,
+                                                    fg = textPrimary,
+                                                    modifier = Modifier.weight(1f),
+                                                ) {
+                                                    onToggleProfilePinned(profile.id, !profile.pinned)
+                                                    expandedCardMenuId = null
+                                                }
+                                                ServerCardActionChip(
+                                                    label = if (profile.concealed) "Unhide" else "Hide",
+                                                    bg = pillBg,
+                                                    fg = textPrimary,
+                                                    modifier = Modifier.weight(1f),
+                                                ) {
+                                                    onToggleProfileConcealed(profile.id, !profile.concealed)
+                                                    expandedCardMenuId = null
+                                                }
+                                                ServerCardActionChip(
+                                                    label = "Delete",
+                                                    bg = pillBg,
+                                                    fg = dangerColor,
+                                                    modifier = Modifier.weight(1f),
+                                                ) {
+                                                    onDeleteSelected(setOf(profile.id))
+                                                    expandedCardMenuId = null
+                                                }
                                             }
                                         }
                                     }
@@ -1381,7 +1439,34 @@ fun ExpressiveServersTab(
                 shape = RoundedCornerShape(26.dp),
                 color = popupBg,
             ) {
-                Column(modifier = Modifier.padding(10.dp)) {
+                Column(
+                    modifier = Modifier
+                        .padding(10.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    PopupMenuRow("＋", "Create server manually", textPrimary) {
+                        showMenu = false
+                        onNewServer()
+                    }
+                    PopupMenuRow("⊞", "New policy group (balancer)", textPrimary) {
+                        showMenu = false
+                        onNewPolicyGroup()
+                    }
+                    PopupMenuRow("🎯", "Locate selected server", textPrimary) {
+                        showMenu = false
+                        val idx = filteredProfiles.indexOfFirst { it.id == selectedProfileId }
+                        if (idx >= 0) {
+                            scope.launch { listState.animateScrollToItem(idx) }
+                        } else {
+                            statusBanner = "Selected server is not in current filter"
+                        }
+                    }
+                    if (selectedSubscription != null && selectedSubscription.id != STANDALONE_SUBSCRIPTION_ID) {
+                        PopupMenuRow("✎", "Edit current subscription", textPrimary) {
+                            showMenu = false
+                            onEditSubscription(selectedSubscription)
+                        }
+                    }
                     PopupMenuRow("↻", "Update all subscriptions", textPrimary) {
                         showMenu = false
                         onUpdateAll()
@@ -1887,7 +1972,7 @@ fun AppearanceStyleModal(
             ModalSectionTitle("UI Design Style", mutedColor)
             StyleOptionCard(
                 title = "Style A · Kiran (M3 Expressive)",
-                subtitle = "Emerald & Mint #86E3B0 · Morphing organic blob · 4-tab pill bar",
+                subtitle = "Emerald & Mint #86E3B0 · Morphing organic blob · 3-tab pill bar",
                 badgeColor = KiranColors.Mint,
                 badgeTextColor = KiranColors.OnMint,
                 selected = settings.designStyle == DesignStyle.KIRAN_A,
@@ -1899,7 +1984,7 @@ fun AppearanceStyleModal(
             Spacer(Modifier.height(8.dp))
             StyleOptionCard(
                 title = "Style B · Sarhad (Scalloped Seal)",
-                subtitle = "Deep Indigo & Violet #6C60F0 · 14-point rotating seal · Live logs & details",
+                subtitle = "Deep Indigo & Violet #6C60F0 · 14-point rotating seal · 3-tab pill bar",
                 badgeColor = SarhadColors.Primary,
                 badgeTextColor = Color.White,
                 selected = settings.designStyle == DesignStyle.SARHAD_B,
@@ -3274,8 +3359,13 @@ fun FragmentMuxModal(
     var fragEnabled by remember(connectionSettings) { mutableStateOf(connectionSettings.fragmentEnabled) }
     var fragLength by remember(connectionSettings) { mutableStateOf(connectionSettings.fragmentLength) }
     var fragInterval by remember(connectionSettings) { mutableStateOf(connectionSettings.fragmentInterval) }
+    var fragPackets by remember(connectionSettings) { mutableStateOf(connectionSettings.fragmentPackets) }
+    var fragMaxSplit by remember(connectionSettings) { mutableStateOf(connectionSettings.fragmentMaxSplit) }
     var muxEnabled by remember(connectionSettings) { mutableStateOf(connectionSettings.muxEnabled) }
     var muxConc by remember(connectionSettings) { mutableStateOf(connectionSettings.muxConcurrency.toString()) }
+    var xudpConc by remember(connectionSettings) { mutableStateOf(connectionSettings.muxXudpConcurrency.toString()) }
+    var xudpQuic by remember(connectionSettings) { mutableStateOf(connectionSettings.muxXudpQuic) }
+    var showManualTuning by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -3287,140 +3377,271 @@ fun FragmentMuxModal(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 22.dp, vertical = 10.dp),
         ) {
             Text(
-                text = "Fragment & Mux",
+                text = "Bypass Censorship (Anti-DPI)",
                 fontFamily = OutfitFont,
                 fontWeight = FontWeight.ExtraBold,
-                fontSize = 24.sp,
+                fontSize = 23.sp,
                 color = textColor,
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "Split TLS ClientHello packets to bypass DPI inspection and multiplex TCP streams.",
+                text = "Pick a quick preset if your ISP blocks or throttles TLS/VPN connections.",
                 fontFamily = OutfitFont,
                 fontSize = 13.sp,
                 color = mutedColor,
             )
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
 
+            // 1-Tap Beginner Presets
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(fieldBg)
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "TLS Fragment",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = textColor,
-                    )
-                    Text(
-                        text = "Length $fragLength bytes · Interval $fragInterval ms",
-                        fontFamily = OutfitFont,
-                        fontSize = 12.sp,
-                        color = mutedColor,
-                    )
-                }
-                ExpressiveSwitch(
-                    checked = fragEnabled,
-                    onCheckedChange = { fragEnabled = it },
-                    activeTrackColor = primaryColor,
-                    activeThumbColor = onPrimaryColor,
-                    inactiveTrackColor = if (isStyleB) SarhadColors.SwitchOff else KiranColors.SwitchOffBg,
-                    inactiveThumbColor = mutedColor,
-                )
-            }
-
-            Spacer(Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(fieldBg)
-                        .padding(14.dp),
+                EditorChip(
+                    label = "Off (Default)",
+                    active = !fragEnabled && !muxEnabled,
+                    primaryColor = primaryColor,
+                    onPrimaryColor = onPrimaryColor,
+                    inactiveBg = fieldBg,
+                    textColor = textColor,
                 ) {
-                    Text("Fragment length (B)", fontFamily = OutfitFont, fontSize = 12.sp, color = mutedColor)
-                    Spacer(Modifier.height(4.dp))
-                    BasicTextField(
-                        value = fragLength,
-                        onValueChange = { fragLength = it },
-                        singleLine = true,
-                        textStyle = TextStyle(
-                            fontFamily = OutfitFont,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = textColor,
-                        ),
-                    )
+                    fragEnabled = false
+                    muxEnabled = false
                 }
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(fieldBg)
-                        .padding(14.dp),
+                EditorChip(
+                    label = "Recommended",
+                    active = fragEnabled && fragPackets == "tlshello" && !muxEnabled,
+                    primaryColor = primaryColor,
+                    onPrimaryColor = onPrimaryColor,
+                    inactiveBg = fieldBg,
+                    textColor = textColor,
                 ) {
-                    Text("Fragment interval (ms)", fontFamily = OutfitFont, fontSize = 12.sp, color = mutedColor)
-                    Spacer(Modifier.height(4.dp))
-                    BasicTextField(
-                        value = fragInterval,
-                        onValueChange = { fragInterval = it },
-                        singleLine = true,
-                        textStyle = TextStyle(
-                            fontFamily = OutfitFont,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = textColor,
-                        ),
-                    )
+                    fragEnabled = true
+                    fragPackets = "tlshello"
+                    fragLength = "100-200"
+                    fragInterval = "10-20"
+                    fragMaxSplit = ""
+                    muxEnabled = false
+                }
+                EditorChip(
+                    label = "Heavy Censorship",
+                    active = fragEnabled && fragPackets == "1-3" && muxEnabled,
+                    primaryColor = primaryColor,
+                    onPrimaryColor = onPrimaryColor,
+                    inactiveBg = fieldBg,
+                    textColor = textColor,
+                ) {
+                    fragEnabled = true
+                    fragPackets = "1-3"
+                    fragLength = "10-30"
+                    fragInterval = "5-10"
+                    fragMaxSplit = ""
+                    muxEnabled = true
+                    muxConc = "8"
+                    xudpConc = "8"
+                    xudpQuic = "reject"
                 }
             }
 
             Spacer(Modifier.height(12.dp))
-
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(22.dp))
+                    .clip(RoundedCornerShape(18.dp))
                     .background(fieldBg)
-                    .padding(16.dp),
+                    .clickable { showManualTuning = !showManualTuning }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Xray Mux.Cool",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = textColor,
-                    )
-                    Text(
-                        text = "Concurrency: ${muxConc.toIntOrNull() ?: 8} streams",
-                        fontFamily = OutfitFont,
-                        fontSize = 12.sp,
-                        color = mutedColor,
-                    )
+                Text("Manual Fine-Tuning (Fragment & Mux)", fontFamily = OutfitFont, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = textColor)
+                Text(if (showManualTuning) "Hide ▴" else "Show ▾", fontFamily = OutfitFont, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = primaryColor)
+            }
+
+            AnimatedVisibility(visible = showManualTuning) {
+                Column(modifier = Modifier.padding(top = 10.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(fieldBg)
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "TLS Fragment",
+                                fontFamily = OutfitFont,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = textColor,
+                            )
+                            Text(
+                                text = "$fragPackets · Length $fragLength B · Interval $fragInterval ms",
+                                fontFamily = OutfitFont,
+                                fontSize = 12.sp,
+                                color = mutedColor,
+                            )
+                        }
+                        ExpressiveSwitch(
+                            checked = fragEnabled,
+                            onCheckedChange = { fragEnabled = it },
+                            activeTrackColor = primaryColor,
+                            activeThumbColor = onPrimaryColor,
+                            inactiveTrackColor = if (isStyleB) SarhadColors.SwitchOff else KiranColors.SwitchOffBg,
+                            inactiveThumbColor = mutedColor,
+                        )
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(fieldBg)
+                                .padding(14.dp),
+                        ) {
+                            Text("Length (B)", fontFamily = OutfitFont, fontSize = 12.sp, color = mutedColor)
+                            Spacer(Modifier.height(4.dp))
+                            BasicTextField(
+                                value = fragLength,
+                                onValueChange = { fragLength = it },
+                                singleLine = true,
+                                textStyle = TextStyle(fontFamily = OutfitFont, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = textColor),
+                            )
+                        }
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(fieldBg)
+                                .padding(14.dp),
+                        ) {
+                            Text("Interval (ms)", fontFamily = OutfitFont, fontSize = 12.sp, color = mutedColor)
+                            Spacer(Modifier.height(4.dp))
+                            BasicTextField(
+                                value = fragInterval,
+                                onValueChange = { fragInterval = it },
+                                singleLine = true,
+                                textStyle = TextStyle(fontFamily = OutfitFont, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = textColor),
+                            )
+                        }
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(fieldBg)
+                                .padding(14.dp),
+                        ) {
+                            Text("MaxSplit", fontFamily = OutfitFont, fontSize = 12.sp, color = mutedColor)
+                            Spacer(Modifier.height(4.dp))
+                            BasicTextField(
+                                value = fragMaxSplit,
+                                onValueChange = { fragMaxSplit = it },
+                                singleLine = true,
+                                textStyle = TextStyle(fontFamily = OutfitFont, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = textColor),
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        listOf("tlshello", "1-3", "1-5").forEach { pkt ->
+                            EditorChip("packets: $pkt", fragPackets == pkt, primaryColor, onPrimaryColor, fieldBg, textColor) {
+                                fragPackets = pkt
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(fieldBg)
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Xray Mux.Cool",
+                                fontFamily = OutfitFont,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = textColor,
+                            )
+                            Text(
+                                text = "TCP ${muxConc.toIntOrNull() ?: 8} · XUDP ${xudpConc.toIntOrNull() ?: 8} ($xudpQuic)",
+                                fontFamily = OutfitFont,
+                                fontSize = 12.sp,
+                                color = mutedColor,
+                            )
+                        }
+                        ExpressiveSwitch(
+                            checked = muxEnabled,
+                            onCheckedChange = { muxEnabled = it },
+                            activeTrackColor = primaryColor,
+                            activeThumbColor = onPrimaryColor,
+                            inactiveTrackColor = if (isStyleB) SarhadColors.SwitchOff else KiranColors.SwitchOffBg,
+                            inactiveThumbColor = mutedColor,
+                        )
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(fieldBg)
+                                .padding(14.dp),
+                        ) {
+                            Text("TCP Concurrency", fontFamily = OutfitFont, fontSize = 12.sp, color = mutedColor)
+                            Spacer(Modifier.height(4.dp))
+                            BasicTextField(
+                                value = muxConc,
+                                onValueChange = { muxConc = it },
+                                singleLine = true,
+                                textStyle = TextStyle(fontFamily = OutfitFont, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = textColor),
+                            )
+                        }
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(fieldBg)
+                                .padding(14.dp),
+                        ) {
+                            Text("XUDP Concurrency", fontFamily = OutfitFont, fontSize = 12.sp, color = mutedColor)
+                            Spacer(Modifier.height(4.dp))
+                            BasicTextField(
+                                value = xudpConc,
+                                onValueChange = { xudpConc = it },
+                                singleLine = true,
+                                textStyle = TextStyle(fontFamily = OutfitFont, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = textColor),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("reject", "allow", "skip").forEach { q ->
+                            EditorChip("xudpQuic: $q", xudpQuic == q, primaryColor, onPrimaryColor, fieldBg, textColor) {
+                                xudpQuic = q
+                            }
+                        }
+                    }
                 }
-                ExpressiveSwitch(
-                    checked = muxEnabled,
-                    onCheckedChange = { muxEnabled = it },
-                    activeTrackColor = primaryColor,
-                    activeThumbColor = onPrimaryColor,
-                    inactiveTrackColor = if (isStyleB) SarhadColors.SwitchOff else KiranColors.SwitchOffBg,
-                    inactiveThumbColor = mutedColor,
-                )
             }
 
             Spacer(Modifier.height(18.dp))
@@ -3437,8 +3658,12 @@ fun FragmentMuxModal(
                                 fragmentEnabled = fragEnabled,
                                 fragmentLength = fragLength.ifBlank { "100-200" },
                                 fragmentInterval = fragInterval.ifBlank { "10-20" },
+                                fragmentPackets = fragPackets.ifBlank { "tlshello" },
+                                fragmentMaxSplit = fragMaxSplit.trim(),
                                 muxEnabled = muxEnabled,
-                                muxConcurrency = muxConc.toIntOrNull()?.coerceIn(1, 64) ?: 8,
+                                muxConcurrency = muxConc.toIntOrNull()?.coerceIn(1, 128) ?: 8,
+                                muxXudpConcurrency = xudpConc.toIntOrNull()?.coerceIn(1, 128) ?: 8,
+                                muxXudpQuic = xudpQuic,
                             )
                         }
                         onDismiss()

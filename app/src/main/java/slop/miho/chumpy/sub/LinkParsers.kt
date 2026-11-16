@@ -47,6 +47,8 @@ object LinkParsers {
                 trimmed.startsWith("hysteria2://", ignoreCase = true) -> parseHysteria2(trimmed)
             trimmed.startsWith("wireguard://", ignoreCase = true) ||
                 trimmed.startsWith("wg://", ignoreCase = true) -> parseWireguardUri(trimmed)
+            trimmed.startsWith("httpproxy://", ignoreCase = true) -> parseHttpProxy(trimmed.replaceFirst("httpproxy://", "http://", ignoreCase = true))
+            trimmed.startsWith("http://", ignoreCase = true) -> parseHttpProxyIfEndpointOnly(trimmed)
             else -> null
         }
         // The link itself rides along, verbatim — the row's copy gives it back the
@@ -282,6 +284,33 @@ object LinkParsers {
         return if (userInfo.contains(":")) {
             profile.copy(username = decodeURIComponent(userInfo.substringBefore(":")),
                 password = decodeURIComponent(userInfo.substringAfter(":")))
+        } else {
+            profile
+        }
+    }
+
+    private fun parseHttpProxyIfEndpointOnly(str: String): ProfileEntity? {
+        val uri = parseUri(str) ?: return null
+        if (uri.idnHost.isEmpty() || uri.port !in 1..65535) return null
+        if (!uri.rawPath.isNullOrEmpty() || !uri.rawQuery.isNullOrEmpty()) return null
+        if (uri.rawUserInfo.isNullOrEmpty() && uri.rawFragment.isNullOrEmpty()) return null
+        return parseHttpProxy(str)
+    }
+
+    fun parseHttpProxy(str: String): ProfileEntity? {
+        val uri = parseUri(str) ?: return null
+        if (uri.idnHost.isEmpty() || uri.port !in 1..65535) return null
+        val profile = draft(ProfileType.HTTP).copy(
+            remarks = fragmentOf(uri),
+            server = uri.idnHost,
+            serverPort = uri.port,
+        )
+        val userInfo = uri.rawUserInfo.orEmpty()
+        return if (userInfo.contains(":")) {
+            profile.copy(
+                username = decodeURIComponent(userInfo.substringBefore(":")),
+                password = decodeURIComponent(userInfo.substringAfter(":")),
+            )
         } else {
             profile
         }

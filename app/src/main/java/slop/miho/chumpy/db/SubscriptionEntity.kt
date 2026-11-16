@@ -56,4 +56,10 @@ data class SubscriptionEntity(
      * which never replace the row, only copy over it.
      */
     val pinned: Boolean = false,
+    /** Optional regex filter: plain pattern includes matches, prefix "!" excludes matches. */
+    val filterRegex: String = "",
+    /** Optional per-subscription HTTP User-Agent override. */
+    val customUserAgent: String = "",
+    /** Optional user-selected auto-update interval in minutes (null uses header or 24h default). */
+    val updateIntervalMinutes: Int? = null,
 )

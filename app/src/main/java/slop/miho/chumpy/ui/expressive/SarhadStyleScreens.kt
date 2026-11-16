@@ -3,6 +3,7 @@ package slop.miho.chumpy.ui.expressive
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -69,12 +70,15 @@ import slop.miho.chumpy.core.TunnelState
 import slop.miho.chumpy.core.TunnelStatus
 import slop.miho.chumpy.core.stripFlag
 import slop.miho.chumpy.data.ConnectionSettings
+import slop.miho.chumpy.data.CustomRoutingRule
 import slop.miho.chumpy.data.DesignStyle
 import slop.miho.chumpy.data.FlagStyle
 import slop.miho.chumpy.data.IconVariant
 import slop.miho.chumpy.data.UiSettings
 import slop.miho.chumpy.db.ProfileEntity
+import slop.miho.chumpy.db.ProfileType
 import slop.miho.chumpy.db.SubscriptionEntity
+import slop.miho.chumpy.sub.LinkSerializer
 import slop.miho.chumpy.ui.HomeUiState
 import slop.miho.chumpy.ui.MainViewModel
 import slop.miho.chumpy.ui.ServersUiState
@@ -92,7 +96,6 @@ import java.util.Locale
 enum class SarhadTab(val label: String, val iconRes: Int) {
     HOME("Home", R.drawable.ic_home),
     SERVERS("Servers", R.drawable.ic_servers),
-    STATS("Stats", R.drawable.ic_stats),
     SETTINGS("Settings", R.drawable.ic_settings),
 }
 
@@ -202,7 +205,7 @@ fun SarhadWelcomeScreen(
             )
             Spacer(Modifier.height(10.dp))
             Text(
-                text = "Hollow VPN pairs deep indigo Material 3 Expressive craft with Xray-core — real latency probes, 7-day traffic metrics, and anti-DPI fragmentation.",
+                text = "Hollow VPN pairs deep indigo Material 3 Expressive craft with Xray-core — real latency probes, smart failover, and anti-DPI fragmentation.",
                 fontFamily = OutfitFont,
                 color = SarhadColors.TextMuted,
                 fontSize = 14.sp,
@@ -372,6 +375,17 @@ fun SarhadMainShell(
     var showHappSpoofModal by remember { mutableStateOf(false) }
     var showDelayTestModal by remember { mutableStateOf(false) }
     var showLogsModal by remember { mutableStateOf(false) }
+    var showServerEditor by remember { mutableStateOf(false) }
+    var editingProfile by remember { mutableStateOf<ProfileEntity?>(null) }
+    var showPolicyEditor by remember { mutableStateOf(false) }
+    var editingPolicyProfile by remember { mutableStateOf<ProfileEntity?>(null) }
+    var qrExportProfile by remember { mutableStateOf<ProfileEntity?>(null) }
+    var qrExportJson by remember { mutableStateOf("") }
+    var editingSubscription by remember { mutableStateOf<SubscriptionEntity?>(null) }
+    var showCustomRoutingModal by remember { mutableStateOf(false) }
+    var showGeodataModal by remember { mutableStateOf(false) }
+    var showBackupModal by remember { mutableStateOf(false) }
+    var showProxyDnsModal by remember { mutableStateOf(false) }
 
     val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
     val selectedSubscription by viewModel.selectedSubscription.collectAsStateWithLifecycle()
@@ -379,6 +393,11 @@ fun SarhadMainShell(
     val coreRunning by viewModel.coreRunning.collectAsStateWithLifecycle()
     val coreLogs by viewModel.coreLogs.collectAsStateWithLifecycle()
     val updateState by viewModel.update.collectAsStateWithLifecycle()
+    val smartSwitchNotice by viewModel.smartSwitchNotice.collectAsStateWithLifecycle()
+
+    LaunchedEffect(qrExportProfile, connectionSettings) {
+        qrExportJson = qrExportProfile?.let { viewModel.buildFullJsonForProfile(it) }.orEmpty()
+    }
 
     BackHandler(enabled = activeTab != SarhadTab.HOME) {
         activeTab = SarhadTab.HOME
@@ -403,6 +422,36 @@ fun SarhadMainShell(
                     onOpenAppearance = { showStyleModal = true },
                     onOpenLogs = { showLogsModal = true },
                 )
+            }
+
+            smartSwitchNotice?.let { notice ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(SarhadColors.SelectedServer)
+                        .clickable { viewModel.dismissSmartSwitchNotice() }
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = notice,
+                        fontFamily = OutfitFont,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = SarhadColors.PrimaryLight,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "Dismiss",
+                        fontFamily = OutfitFont,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = SarhadColors.TextMuted,
+                    )
+                }
             }
 
             Box(
@@ -478,16 +527,30 @@ fun SarhadMainShell(
                             onDeleteSelected = { viewModel.deleteProfiles(it) },
                             onExportAll = { viewModel.exportAllProfiles() },
                             onDeleteAll = { viewModel.deleteAllProfiles() },
+                            onNewServer = {
+                                editingProfile = null
+                                showServerEditor = true
+                            },
+                            onNewPolicyGroup = {
+                                editingPolicyProfile = null
+                                showPolicyEditor = true
+                            },
+                            onEditProfile = { profile ->
+                                if (profile.type == ProfileType.BALANCER) {
+                                    editingPolicyProfile = profile
+                                    showPolicyEditor = true
+                                } else {
+                                    editingProfile = profile
+                                    showServerEditor = true
+                                }
+                            },
+                            onShareOrQr = { profile -> qrExportProfile = profile },
+                            onTestSpeed = { profile -> viewModel.testProfileSpeed(profile) },
+                            onEditSubscription = { sub -> editingSubscription = sub },
                         )
 
-                        SarhadTab.STATS -> SarhadStatsTab(
-                            isConnected = isConnected,
-                            home = home,
-                            stats = stats,
-                            onOpenLogs = { showLogsModal = true },
-                        )
-
-                        SarhadTab.SETTINGS -> SarhadSettingsTab(
+                        SarhadTab.SETTINGS -> ExpressiveSettingsTab(
+                            isStyleB = true,
                             settings = settings,
                             connectionSettings = connectionSettings,
                             subscriptions = subscriptions,
@@ -504,6 +567,10 @@ fun SarhadMainShell(
                             onOpenHappSpoofModal = { showHappSpoofModal = true },
                             onOpenDelayTestModal = { showDelayTestModal = true },
                             onOpenLogsModal = { showLogsModal = true },
+                            onOpenCustomRouting = { showCustomRoutingModal = true },
+                            onOpenGeodataModal = { showGeodataModal = true },
+                            onOpenBackupModal = { showBackupModal = true },
+                            onOpenProxyDnsModal = { showProxyDnsModal = true },
                             onCheckForUpdate = { viewModel.recheckUpdate() },
                             onUpdateAction = { viewModel.onUpdateChipTap() },
                         )
@@ -604,6 +671,88 @@ fun SarhadMainShell(
                 coreVersion = coreVersion,
                 pingMillis = home.pingMillis,
                 onDismiss = { showLogsModal = false },
+            )
+        }
+
+        if (showServerEditor) {
+            ServerEditorModal(
+                isStyleB = true,
+                editingProfile = editingProfile,
+                availableChainParents = servers.profiles,
+                onSave = { profile, cb -> viewModel.upsertManualProfile(profile, cb) },
+                onDismiss = { showServerEditor = false },
+            )
+        }
+
+        if (showPolicyEditor) {
+            PolicyGroupEditorModal(
+                isStyleB = true,
+                editingProfile = editingPolicyProfile,
+                candidateServers = servers.profiles,
+                onSave = { profile, cb -> viewModel.upsertManualProfile(profile, cb) },
+                onDismiss = { showPolicyEditor = false },
+            )
+        }
+
+        qrExportProfile?.let { qrProfile ->
+            QrAndExportModal(
+                isStyleB = true,
+                profile = qrProfile,
+                shareUri = LinkSerializer.toShareUri(qrProfile),
+                fullConfigJson = qrExportJson,
+                onDismiss = { qrExportProfile = null },
+            )
+        }
+
+        editingSubscription?.let { sub ->
+            SubscriptionEditModal(
+                isStyleB = true,
+                subscription = sub,
+                onSave = { id, name, url, filterRegex, ua, mins, autoUpd, refresh ->
+                    viewModel.updateSubscriptionEditable(id, name, url, filterRegex, ua, mins, autoUpd, refresh)
+                },
+                onDismiss = { editingSubscription = null },
+            )
+        }
+
+        if (showCustomRoutingModal) {
+            CustomRoutingModal(
+                isStyleB = true,
+                connectionSettings = connectionSettings,
+                onUpdateConnection = { viewModel.updateConnection(it) },
+                onDismiss = { showCustomRoutingModal = false },
+            )
+        }
+
+        if (showGeodataModal) {
+            GeodataManagerModal(
+                isStyleB = true,
+                tunnelUp = isConnected,
+                connectionSettings = connectionSettings,
+                onUpdateConnection = { viewModel.updateConnection(it) },
+                onDismiss = { showGeodataModal = false },
+            )
+        }
+
+        if (showProxyDnsModal) {
+            ProxyAndDnsAdvancedModal(
+                isStyleB = true,
+                connectionSettings = connectionSettings,
+                onUpdateConnection = { viewModel.updateConnection(it) },
+                onDismiss = { showProxyDnsModal = false },
+            )
+        }
+
+        if (showBackupModal) {
+            BackupRestoreModal(
+                isStyleB = true,
+                connectionSettings = connectionSettings,
+                onUpdateConnection = { viewModel.updateConnection(it) },
+                onExportZip = { uri, cb -> viewModel.exportBackupZip(uri, cb) },
+                onImportZip = { uri, cb -> viewModel.importBackupZip(uri, cb) },
+                onUploadWebDav = { cb -> viewModel.uploadWebDav(cb) },
+                onDownloadWebDav = { cb -> viewModel.downloadWebDav(cb) },
+                onDismiss = { showBackupModal = false },
             )
         }
     }
@@ -1096,698 +1245,7 @@ private fun SarhadMetricTile(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TAB 3: LIVE TELEMETRY & 7-DAY STATS (STYLE B — 100% REAL DATA)
-// ─────────────────────────────────────────────────────────────────────────────
-@Composable
-private fun SarhadStatsTab(
-    isConnected: Boolean,
-    home: HomeUiState,
-    stats: StatsUiState,
-    onOpenLogs: () -> Unit,
-) {
-    val dayFmt = remember { DateTimeFormatter.ofPattern("EEE", Locale.US) }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 6.dp, bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column {
-                    Text(
-                        text = "Telemetry",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 30.sp,
-                        letterSpacing = (-1).sp,
-                        color = SarhadColors.TextPrimary,
-                    )
-                    Text(
-                        text = when {
-                            isConnected -> "Live 15s Xray counters & probes"
-                            stats.connectedMillis != null -> "Last session frozen (${formatElapsedHms(stats.connectedMillis)})"
-                            else -> "Connect tunnel to record live traffic"
-                        },
-                        fontFamily = OutfitFont,
-                        fontSize = 12.sp,
-                        color = SarhadColors.TextMuted,
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(SarhadColors.PillBg)
-                        .clickable(onClick = onOpenLogs)
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                ) {
-                    Text(
-                        text = "Core Logs",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = SarhadColors.PrimaryLight,
-                    )
-                }
-            }
-        }
-
-        // Totals Summary Row
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                SarhadMetricTile(
-                    label = "Session RX",
-                    value = formatCompactBytes(stats.rxTotal),
-                    sub = formatSpeedMbps(stats.liveDownBps).let { "${it.first} ${it.second}" },
-                    accent = SarhadColors.Green,
-                    modifier = Modifier.weight(1f),
-                )
-                SarhadMetricTile(
-                    label = "Session TX",
-                    value = formatCompactBytes(stats.txTotal),
-                    sub = formatSpeedMbps(stats.liveUpBps).let { "${it.first} ${it.second}" },
-                    accent = SarhadColors.Pink,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-
-        // Live Throughput Sparkline (real samples from StatsUiState.samples)
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
-                color = SarhadColors.Card,
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = "Throughput Window (15m)",
-                            fontFamily = OutfitFont,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            color = SarhadColors.TextPrimary,
-                        )
-                        Text(
-                            text = if (home.pingMillis != null) "${home.pingMillis} ms RTT" else "↓ Green · ↑ Pink",
-                            fontFamily = OutfitFont,
-                            fontSize = 12.sp,
-                            color = SarhadColors.TextMuted,
-                        )
-                    }
-                    Spacer(Modifier.height(14.dp))
-
-                    if (stats.samples.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(110.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .background(SarhadColors.Bg),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = "No traffic samples recorded yet",
-                                fontFamily = OutfitFont,
-                                fontSize = 13.sp,
-                                color = SarhadColors.TextMuted,
-                            )
-                        }
-                    } else {
-                        val samples = stats.samples
-                        val peak = samples.maxOf { maxOf(it.downBps, it.upBps) }.coerceAtLeast(1L).toFloat()
-                        Canvas(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(120.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .background(SarhadColors.Bg)
-                                .padding(horizontal = 8.dp, vertical = 10.dp),
-                        ) {
-                            val n = samples.size
-                            val stepX = if (n <= 1) size.width else size.width / (n - 1).toFloat()
-                            val downPath = Path()
-                            val upPath = Path()
-                            samples.forEachIndexed { idx, s ->
-                                val x = if (n == 1) size.width / 2f else idx * stepX
-                                val yDown = size.height - (s.downBps / peak) * size.height
-                                val yUp = size.height - (s.upBps / peak) * size.height
-                                if (idx == 0) {
-                                    downPath.moveTo(x, yDown)
-                                    upPath.moveTo(x, yUp)
-                                } else {
-                                    downPath.lineTo(x, yDown)
-                                    upPath.lineTo(x, yUp)
-                                }
-                            }
-                            if (n == 1) {
-                                val s = samples.first()
-                                drawCircle(
-                                    color = SarhadColors.Green,
-                                    radius = 5.dp.toPx(),
-                                    center = Offset(size.width / 2f, size.height - (s.downBps / peak) * size.height),
-                                )
-                                drawCircle(
-                                    color = SarhadColors.Pink,
-                                    radius = 4.dp.toPx(),
-                                    center = Offset(size.width / 2f, size.height - (s.upBps / peak) * size.height),
-                                )
-                            } else {
-                                drawPath(
-                                    path = downPath,
-                                    color = SarhadColors.Green,
-                                    style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round),
-                                )
-                                drawPath(
-                                    path = upPath,
-                                    color = SarhadColors.Pink,
-                                    style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 7-Day Daily Traffic Bar Chart (real persisted data from DailyTrafficStore)
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
-                color = SarhadColors.Card,
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = "Last 7 Days Usage",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = SarhadColors.TextPrimary,
-                    )
-                    Spacer(Modifier.height(14.dp))
-
-                    val today = LocalDate.now().toEpochDay()
-                    val byDay = stats.week.associateBy { it.epochDay }
-                    val sevenDays = (-6L..0L).map { offset ->
-                        val day = today + offset
-                        val entry = byDay[day]
-                        Triple(
-                            LocalDate.ofEpochDay(day).format(dayFmt),
-                            (entry?.rx ?: 0L) + (entry?.tx ?: 0L),
-                            day == today,
-                        )
-                    }
-                    val maxTotal = sevenDays.maxOf { it.second }.coerceAtLeast(1L).toFloat()
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(130.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.Bottom,
-                    ) {
-                        sevenDays.forEach { (label, total, isToday) ->
-                            val fraction = (total / maxTotal).coerceIn(0.05f, 1f)
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Bottom,
-                            ) {
-                                Text(
-                                    text = if (total > 0L) formatCompactBytes(total).substringBefore(' ') else "0",
-                                    fontFamily = OutfitFont,
-                                    fontSize = 10.sp,
-                                    color = SarhadColors.TextMuted,
-                                    maxLines = 1,
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height((76.dp * if (total > 0L) fraction else 0.08f))
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(
-                                            if (total == 0L) SarhadColors.PillBg
-                                            else if (isToday) SarhadColors.Primary
-                                            else SarhadColors.SelectedServer,
-                                        ),
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    text = label,
-                                    fontFamily = OutfitFont,
-                                    fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
-                                    fontSize = 11.sp,
-                                    color = if (isToday) SarhadColors.PrimaryLight else SarhadColors.TextMuted,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Probe Loss Summary
-        item {
-            val totalSent = stats.buckets.sumOf { it.sent }
-            val totalLost = stats.buckets.sumOf { it.lost }
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(26.dp),
-                color = SarhadColors.Card,
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column {
-                        Text(
-                            text = "Connectivity Probes",
-                            fontFamily = OutfitFont,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = SarhadColors.TextPrimary,
-                        )
-                        Text(
-                            text = if (totalSent == 0) "No 15s probes dispatched yet" else "$totalSent sent · $totalLost lost",
-                            fontFamily = OutfitFont,
-                            fontSize = 12.sp,
-                            color = SarhadColors.TextMuted,
-                        )
-                    }
-                    Text(
-                        text = if (totalSent == 0) "—" else "${((totalSent - totalLost) * 100 / totalSent)}% OK",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 15.sp,
-                        color = if (stats.recentLossPercent != null) SarhadColors.Pink else SarhadColors.Green,
-                    )
-                }
-            }
-        }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TAB 4: SETTINGS (STYLE B — FULL FEATURE PARITY WITH STYLE A & CLASSIC)
-// ─────────────────────────────────────────────────────────────────────────────
-@Composable
-private fun SarhadSettingsTab(
-    settings: UiSettings,
-    connectionSettings: ConnectionSettings,
-    subscriptions: List<SubscriptionEntity>,
-    coreVersion: String?,
-    coreRunning: Boolean,
-    updateState: UpdateUiState,
-    onUpdateSettings: ((UiSettings) -> UiSettings) -> Unit,
-    onUpdateConnection: ((ConnectionSettings) -> ConnectionSettings) -> Unit,
-    onOpenLauncherIconModal: () -> Unit,
-    onOpenDnsModal: () -> Unit,
-    onOpenFragmentModal: () -> Unit,
-    onOpenPerAppProxy: () -> Unit,
-    onOpenStyleModal: () -> Unit,
-    onOpenHappSpoofModal: () -> Unit,
-    onOpenDelayTestModal: () -> Unit,
-    onOpenLogsModal: () -> Unit,
-    onCheckForUpdate: () -> Unit,
-    onUpdateAction: () -> Unit,
-) {
-    val context = LocalContext.current
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 6.dp, bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Text(
-                text = "Settings",
-                fontFamily = OutfitFont,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 30.sp,
-                letterSpacing = (-1).sp,
-                color = SarhadColors.TextPrimary,
-            )
-        }
-
-        // Appearance & Launcher Card
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
-                color = SarhadColors.Card,
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = "Appearance & Launcher",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = SarhadColors.TextPrimary,
-                    )
-                    Spacer(Modifier.height(10.dp))
-
-                    SarhadActionRow(
-                        title = "UI Style, Theme, Fonts & Flags",
-                        subtitle = "Style A · Kiran / Style B · Sarhad · ${settings.themeMode.name}",
-                        valueText = "Customize ›",
-                        onClick = onOpenStyleModal,
-                    )
-                    SarhadActionRow(
-                        title = "Launcher Icon",
-                        subtitle = when (settings.iconVariant) {
-                            IconVariant.CHUMPY -> "Hollow Mint"
-                            IconVariant.INVERTED -> "Inverted Mint"
-                            IconVariant.DARK -> "Night Dark"
-                            IconVariant.THEMED -> "Themed Monochrome"
-                        },
-                        valueText = "Change ›",
-                        onClick = onOpenLauncherIconModal,
-                    )
-                    SarhadActionRow(
-                        title = "Wallpaper & Backdrop",
-                        subtitle = "Custom image backdrop, blur & dim",
-                        valueText = "Open ›",
-                        onClick = {
-                            context.startActivity(Intent(context, WallpaperActivity::class.java))
-                        },
-                    )
-                    SarhadToggleRow(
-                        title = "Mask Server Addresses",
-                        subtitle = "Hide domains, IPs and subscription URLs",
-                        checked = settings.maskAddresses,
-                        onCheckedChange = { enabled ->
-                            onUpdateSettings { it.copy(maskAddresses = enabled) }
-                        },
-                    )
-                }
-            }
-        }
-
-        // Regional Routing Card (Moved from Classic)
-        item {
-            RegionRoutingSelectorCard(
-                isStyleB = true,
-                selectedMode = connectionSettings.routingMode,
-                flagStyle = settings.flagStyle,
-                onSelectMode = { mode ->
-                    onUpdateConnection { it.copy(routingMode = mode) }
-                },
-            )
-        }
-
-        // Connection & Protection Card
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
-                color = SarhadColors.Card,
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = "Connection & Protection",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = SarhadColors.TextPrimary,
-                    )
-                    Spacer(Modifier.height(10.dp))
-
-                    SarhadToggleRow(
-                        title = "Per-App Proxy",
-                        subtitle = if (connectionSettings.perAppEnabled) {
-                            "${connectionSettings.bypassedApps.size} app(s) bypassed"
-                        } else {
-                            "Disabled — routing all apps"
-                        },
-                        checked = connectionSettings.perAppEnabled,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(perAppEnabled = enabled) }
-                        },
-                    )
-                    SarhadActionRow(
-                        title = "Manage Bypassed Apps",
-                        subtitle = "Select apps to exclude from VPN tunnel",
-                        valueText = "${connectionSettings.bypassedApps.size} ›",
-                        onClick = onOpenPerAppProxy,
-                    )
-                    SarhadToggleRow(
-                        title = "Bypass LAN & Private Subnets",
-                        subtitle = "Keep local devices direct",
-                        checked = connectionSettings.bypassLan,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(bypassLan = enabled) }
-                        },
-                    )
-                    SarhadToggleRow(
-                        title = "Bypass Domestic Sites",
-                        subtitle = "Direct routing for local country traffic",
-                        checked = connectionSettings.bypassDomestic,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(bypassDomestic = enabled) }
-                        },
-                    )
-                    SarhadToggleRow(
-                        title = "Block Ads & Trackers",
-                        subtitle = "Drop geosite:category-ads-all in Xray core",
-                        checked = connectionSettings.blockAds,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(blockAds = enabled) }
-                        },
-                    )
-                    SarhadToggleRow(
-                        title = "Auto Reconnect",
-                        subtitle = "Automatically restore tunnel after drops",
-                        checked = connectionSettings.autoReconnect,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(autoReconnect = enabled) }
-                        },
-                    )
-                    SarhadToggleRow(
-                        title = "Kill Switch",
-                        subtitle = "Prevent leaks if VPN drops unexpectedly",
-                        checked = connectionSettings.killSwitch,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(killSwitch = enabled) }
-                        },
-                    )
-                    SarhadToggleRow(
-                        title = "Untrusted Wi-Fi Auto-Connect",
-                        subtitle = "Automatically enable VPN on open Wi-Fi",
-                        checked = connectionSettings.autoConnectUntrustedWifi,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(autoConnectUntrustedWifi = enabled) }
-                        },
-                    )
-                    SarhadToggleRow(
-                        title = "Start on Boot",
-                        subtitle = "Start Hollow VPN after device restart",
-                        checked = connectionSettings.startOnBoot,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(startOnBoot = enabled) }
-                        },
-                    )
-                }
-            }
-        }
-
-        // Core, DNS, Spoof & Diagnostics
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
-                color = SarhadColors.Card,
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = "Core, DNS & Diagnostics",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = SarhadColors.TextPrimary,
-                    )
-                    Spacer(Modifier.height(10.dp))
-
-                    SarhadActionRow(
-                        title = "DNS Resolver",
-                        subtitle = connectionSettings.dnsProvider,
-                        valueText = "Edit ›",
-                        onClick = onOpenDnsModal,
-                    )
-                    SarhadActionRow(
-                        title = "TLS Fragment & Mux",
-                        subtitle = buildString {
-                            append(if (connectionSettings.fragmentEnabled) "Fragment ON (${connectionSettings.fragmentLength})" else "Fragment OFF")
-                            append(" · ")
-                            append(if (connectionSettings.muxEnabled) "Mux ON (${connectionSettings.muxConcurrency})" else "Mux OFF")
-                        },
-                        valueText = "Edit ›",
-                        onClick = onOpenFragmentModal,
-                    )
-                    SarhadActionRow(
-                        title = "Delay Test URL & Auto-Update",
-                        subtitle = "${subscriptions.count { it.autoUpdate }}/${subscriptions.size} auto-refresh · ${connectionSettings.delayTestUrl}",
-                        valueText = "Configure ›",
-                        onClick = onOpenDelayTestModal,
-                    )
-                    SarhadActionRow(
-                        title = "Spoof as Happ",
-                        subtitle = if (settings.happSpoof) "Active (${settings.happDeviceModel})" else "Disabled",
-                        valueText = "Configure ›",
-                        onClick = onOpenHappSpoofModal,
-                    )
-                    SarhadActionRow(
-                        title = "Xray Core Logs",
-                        subtitle = if (coreRunning) "Core running · Tap to inspect live logs" else "View diagnostics & session logs",
-                        valueText = "Logs ›",
-                        onClick = onOpenLogsModal,
-                    )
-                }
-            }
-        }
-
-        // About & Updates
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
-                color = SarhadColors.Card,
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = "About Hollow VPN",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = SarhadColors.TextPrimary,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    SarhadActionRow(
-                        title = "App Version",
-                        subtitle = "v${BuildConfig.VERSION_NAME} · ${coreVersion ?: "Xray-core ready"}",
-                        valueText = if (updateState.checking) "Checking…" else "Check updates",
-                        onClick = onCheckForUpdate,
-                    )
-                    if (updateState.available != null) {
-                        SarhadActionRow(
-                            title = "Release ${updateState.available.tag}",
-                            subtitle = when {
-                                updateState.downloadedFile != null -> "APK downloaded and ready"
-                                updateState.downloading -> "Downloading ${updateState.downloadPercent}%"
-                                else -> "Tap to download latest APK"
-                            },
-                            valueText = if (updateState.downloadedFile != null) "Install" else "Download",
-                            onClick = onUpdateAction,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SarhadToggleRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
-            .padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                fontFamily = OutfitFont,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp,
-                color = SarhadColors.TextPrimary,
-            )
-            Text(
-                text = subtitle,
-                fontFamily = OutfitFont,
-                fontSize = 12.sp,
-                color = SarhadColors.TextMuted,
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        ExpressiveSwitch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            activeTrackColor = SarhadColors.Primary,
-            activeThumbColor = Color.White,
-            inactiveTrackColor = SarhadColors.SwitchOff,
-            inactiveThumbColor = SarhadColors.TextMuted,
-        )
-    }
-}
-
-@Composable
-private fun SarhadActionRow(
-    title: String,
-    subtitle: String,
-    valueText: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                fontFamily = OutfitFont,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp,
-                color = SarhadColors.TextPrimary,
-            )
-            Text(
-                text = subtitle,
-                fontFamily = OutfitFont,
-                fontSize = 12.sp,
-                color = SarhadColors.TextMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = valueText,
-            fontFamily = OutfitFont,
-            fontWeight = FontWeight.Bold,
-            fontSize = 13.sp,
-            color = SarhadColors.PrimaryLight,
-        )
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BOTTOM NAVIGATION DOCK (STYLE B)
+// BOTTOM NAVIGATION DOCK (STYLE B — 3-TAB PILL BAR)
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun SarhadBottomDock(

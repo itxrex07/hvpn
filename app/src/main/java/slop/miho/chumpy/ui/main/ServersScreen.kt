@@ -2565,8 +2565,10 @@ private fun protocolLabel(profile: ProfileEntity): String? = when (profile.type)
     slop.miho.chumpy.db.ProfileType.TROJAN -> "trojan"
     slop.miho.chumpy.db.ProfileType.SHADOWSOCKS -> "ss"
     slop.miho.chumpy.db.ProfileType.SOCKS -> "socks"
+    slop.miho.chumpy.db.ProfileType.HTTP -> "http"
     slop.miho.chumpy.db.ProfileType.WIREGUARD -> "wireguard"
     slop.miho.chumpy.db.ProfileType.HYSTERIA2 -> "hysteria2"
+    slop.miho.chumpy.db.ProfileType.CUSTOM_JSON -> "json"
     // The supporting line of a balancer row is its own — see balancerStrategyLabel.
     slop.miho.chumpy.db.ProfileType.BALANCER -> null
 }

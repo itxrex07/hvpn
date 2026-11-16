@@ -7,7 +7,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import slop.miho.chumpy.db.ProfileEntity
@@ -16,14 +15,14 @@ import slop.miho.chumpy.sub.LinkUtils
 
 /**
  * Renders a [ProfileEntity] as one Xray outbound, in the current core's flat settings
- * dialect ({@code address}/{@code port}/… directly in settings — the form Xray-core's own
- * config loader accepts and v2rayNG emits). Modeled on v2rayNG's CoreOutboundBuilder.
+ * dialect ({@code address}/{@code port}/... directly in settings). Modeled on v2rayNG's
+ * CoreOutboundBuilder.
  */
 object OutboundBuilder {
     private const val TLS = "tls"
     private const val REALITY = "reality"
+    private val lenientJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    /** The endpoint host the config's address field wants, IPv6 brackets included. */
     private fun host(profile: ProfileEntity): String = LinkUtils.ipv6Brackets(profile.server)
 
     fun build(
@@ -32,33 +31,100 @@ object OutboundBuilder {
         muxEnabled: Boolean = false,
         muxConcurrency: Int = 8,
         dialerProxy: String? = null,
-    ): JsonObject = buildJsonObject {
-        put("tag", tag)
-        put("protocol", protocolName(profile.type))
-        put("settings", settings(profile))
-        if (profile.type != ProfileType.WIREGUARD) {
-            val stream = streamSettings(profile)
-            if (dialerProxy != null && stream != null) {
-                val existingSockopt = stream["sockopt"] as? JsonObject
-                val updatedSockopt = JsonObject(
-                    (existingSockopt?.toMap() ?: emptyMap()) + ("dialerProxy" to JsonPrimitive(dialerProxy)),
-                )
-                put("streamSettings", stream.with("sockopt" to updatedSockopt))
-            } else {
-                stream?.let { put("streamSettings", it) }
+        muxXudpConcurrency: Int = 8,
+        muxXudpQuic: String = "reject",
+    ): JsonObject {
+        if (profile.type == ProfileType.CUSTOM_JSON) {
+            return buildCustomJsonOutbound(
+                profile = profile,
+                tag = tag,
+                muxEnabled = muxEnabled,
+                muxConcurrency = muxConcurrency,
+                dialerProxy = dialerProxy,
+                muxXudpConcurrency = muxXudpConcurrency,
+                muxXudpQuic = muxXudpQuic,
+            )
+        }
+        return buildJsonObject {
+            put("tag", tag)
+            put("protocol", protocolName(profile.type))
+            put("settings", settings(profile))
+            if (profile.type != ProfileType.WIREGUARD) {
+                val baseStream = streamSettings(profile)
+                if (dialerProxy != null) {
+                    val stream = baseStream ?: buildJsonObject { put("network", "tcp") }
+                    val existingSockopt = stream["sockopt"] as? JsonObject
+                    val updatedSockopt = JsonObject(
+                        (existingSockopt?.toMap() ?: emptyMap()) + ("dialerProxy" to JsonPrimitive(dialerProxy)),
+                    )
+                    put("streamSettings", stream.with("sockopt" to updatedSockopt))
+                } else {
+                    baseStream?.let { put("streamSettings", it) }
+                }
+            }
+            val useMux = muxEnabled &&
+                profile.type != ProfileType.WIREGUARD &&
+                profile.type != ProfileType.HYSTERIA2 &&
+                !profile.flow.contains("vision", ignoreCase = true)
+            put(
+                "mux",
+                buildJsonObject {
+                    put("enabled", useMux)
+                    if (useMux) {
+                        put("concurrency", muxConcurrency.coerceIn(1, 128))
+                        put("xudpConcurrency", muxXudpConcurrency.coerceIn(1, 128))
+                        put("xudpProxyUDP443", muxXudpQuic.ifBlank { "reject" })
+                    }
+                },
+            )
+        }
+    }
+
+    private fun buildCustomJsonOutbound(
+        profile: ProfileEntity,
+        tag: String,
+        muxEnabled: Boolean,
+        muxConcurrency: Int,
+        dialerProxy: String?,
+        muxXudpConcurrency: Int,
+        muxXudpQuic: String,
+    ): JsonObject {
+        val parsed = runCatching { lenientJson.parseToJsonElement(profile.rawConfigJson).jsonObject }.getOrNull()
+        val rawOutbound = when {
+            parsed == null -> null
+            parsed["outbounds"] is JsonArray -> (parsed["outbounds"] as JsonArray)
+                .filterIsInstance<JsonObject>()
+                .firstOrNull {
+                    val proto = (it["protocol"] as? JsonPrimitive)?.content
+                    proto != null && proto !in setOf("freedom", "blackhole", "dns")
+                }
+            parsed["protocol"] != null -> parsed
+            else -> null
+        } ?: return buildJsonObject {
+            put("tag", tag)
+            put("protocol", "freedom")
+            put("settings", buildJsonObject {})
+        }
+
+        val map = rawOutbound.toMutableMap()
+        map["tag"] = JsonPrimitive(tag)
+        if (dialerProxy != null) {
+            val stream = (map["streamSettings"] as? JsonObject) ?: buildJsonObject { put("network", "tcp") }
+            val existingSockopt = stream["sockopt"] as? JsonObject
+            val updatedSockopt = JsonObject(
+                (existingSockopt?.toMap() ?: emptyMap()) + ("dialerProxy" to JsonPrimitive(dialerProxy)),
+            )
+            map["streamSettings"] = stream.with("sockopt" to updatedSockopt)
+        }
+        if (muxEnabled && "mux" !in map) {
+            map["mux"] = buildJsonObject {
+                put("enabled", true)
+                put("concurrency", muxConcurrency.coerceIn(1, 128))
+                put("xudpConcurrency", muxXudpConcurrency.coerceIn(1, 128))
+                put("xudpProxyUDP443", muxXudpQuic.ifBlank { "reject" })
             }
         }
-        val useMux = muxEnabled &&
-            profile.type != ProfileType.WIREGUARD &&
-            profile.type != ProfileType.HYSTERIA2 &&
-            !profile.flow.contains("vision", ignoreCase = true)
-        put(
-            "mux",
-            buildJsonObject {
-                put("enabled", useMux)
-                if (useMux) put("concurrency", muxConcurrency.coerceIn(1, 64))
-            },
-        )
+        return JsonObject(map)
     }
 
     fun protocolName(type: ProfileType): String = when (type) {
@@ -67,16 +133,17 @@ object OutboundBuilder {
         ProfileType.TROJAN -> "trojan"
         ProfileType.SHADOWSOCKS -> "shadowsocks"
         ProfileType.SOCKS -> "socks"
+        ProfileType.HTTP -> "http"
         ProfileType.WIREGUARD -> "wireguard"
         ProfileType.HYSTERIA2 -> "hysteria"
-        // A balancer never reaches an outbound: it is unwrapped into its members at
-        // build time, in XrayConfigBuilder.
+        ProfileType.CUSTOM_JSON -> "freedom"
         ProfileType.BALANCER -> error("a balancer is not an outbound")
     }
 
     private fun settings(profile: ProfileEntity): JsonObject = buildJsonObject {
         when (profile.type) {
             ProfileType.BALANCER -> error("a balancer is not an outbound")
+            ProfileType.CUSTOM_JSON -> Unit
 
             ProfileType.VMESS -> {
                 put("address", host(profile))
@@ -111,7 +178,7 @@ object OutboundBuilder {
                 put("level", 8)
             }
 
-            ProfileType.SOCKS -> {
+            ProfileType.SOCKS, ProfileType.HTTP -> {
                 put("address", host(profile))
                 put("port", profile.serverPort)
                 if (profile.username.isNotEmpty()) put("user", profile.username)
@@ -125,10 +192,6 @@ object OutboundBuilder {
                 put("port", profile.serverPort)
             }
 
-            // The one branch that builds its object as a whole: its entries still have
-            // to be put into this builder — a bare expression here is the lambda's last
-            // statement, its value dropped, and the outbound would ship with empty
-            // settings (the core's "WireGuard secret key must not be empty").
             ProfileType.WIREGUARD -> wireguardSettings(profile).forEach { (key, value) ->
                 put(key, value)
             }
@@ -162,26 +225,12 @@ object OutboundBuilder {
         put("remoteDNS", JsonArray(listOf(JsonPrimitive("1.1.1.1"), JsonPrimitive("8.8.8.8"))))
     }
 
-    /** The WireGuard client's reserved bytes, "1,2,3"-style, as a JSON array. */
     private fun reservedOf(profile: ProfileEntity): JsonArray? {
         val bytes = profile.wgReserved.split(',').mapNotNull { it.trim().toIntOrNull() }
         return if (bytes.size == 3) JsonArray(bytes.map(::JsonPrimitive)) else null
     }
 
-    // ------------------------------------------------------------------ stream
-
-    /**
-     * The streamSettings object: transport + security. Null only when there is nothing to
-     * say (plain TCP without TLS), in which case the whole section is omitted. The
-     * "security" field itself matters as much as the settings object under it: the core's
-     * loader rejects a vless or trojan outbound whose security type reads empty (plain
-     * text to a public address), no matter what tlsSettings/realitySettings sit next to it.
-     */
     private fun streamSettings(profile: ProfileEntity): JsonObject? {
-        // Hysteria2 rides its own transport, named after the protocol — the link parser
-        // stamps it on every import, but rows that predate that (or came from foreign
-        // formats) carry an empty network, and the core answers those with "not hysteria
-        // transport". The profile type decides, the network field can only agree.
         val network = if (profile.type == ProfileType.HYSTERIA2) "hysteria" else profile.network.ifEmpty { "tcp" }
         var json = buildJsonObject { put("network", network) }
 
@@ -209,7 +258,6 @@ object OutboundBuilder {
         if (profile.sni.isNotEmpty()) put("serverName", profile.sni)
         if (profile.allowInsecure) put("allowInsecure", true)
         if (profile.fingerprint.isNotEmpty()) put("fingerprint", profile.fingerprint)
-        // Hysteria2 rides on HTTP/3; everything else keeps the link's own list.
         val alpn = profile.alpn.split(',').map { it.trim() }.filter { it.isNotEmpty() }
         val effective = if (alpn.isNotEmpty()) alpn else if (profile.type == ProfileType.HYSTERIA2 || profile.network == "hysteria") listOf("h3") else emptyList()
         if (effective.isNotEmpty()) put("alpn", JsonArray(effective.map(::JsonPrimitive)))
@@ -224,7 +272,6 @@ object OutboundBuilder {
         put("show", false)
     }
 
-    /** transport-name → settings-object, for the transports that need a settings object. */
     private fun transportSettings(profile: ProfileEntity): Pair<String, JsonObject>? = when (profile.network) {
         "tcp", "raw" -> {
             if (profile.headerType == "http") {
@@ -282,10 +329,6 @@ object OutboundBuilder {
         else -> null
     }
 
-    /**
-     * The Hysteria2 masking block: salamander obfuscation and UDP port hopping, the two
-     * things hy2 links actually carry.
-     */
     private fun finalMask(profile: ProfileEntity): JsonObject? {
         val udp = buildJsonArray {
             if (profile.obfsPassword.isNotEmpty()) {
@@ -316,7 +359,6 @@ object OutboundBuilder {
         return buildJsonObject { put("udp", udp) }
     }
 
-    /** Pass-through of a raw JSON blob (XHTTP extra); null when it is not valid JSON. */
     private fun rawJson(raw: String?): JsonElement? {
         if (raw.isNullOrBlank()) return null
         return try {
@@ -326,7 +368,6 @@ object OutboundBuilder {
         }
     }
 
-    /** A copy of the object with extra keys: JsonObject is immutable, so additions rebuild it. */
     private fun JsonObject.with(vararg pairs: Pair<String, JsonElement>): JsonObject =
         JsonObject(toMap() + pairs)
 }

@@ -3,6 +3,7 @@ package slop.miho.chumpy.ui.expressive
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -61,12 +62,15 @@ import slop.miho.chumpy.core.TunnelState
 import slop.miho.chumpy.core.TunnelStatus
 import slop.miho.chumpy.core.stripFlag
 import slop.miho.chumpy.data.ConnectionSettings
+import slop.miho.chumpy.data.CustomRoutingRule
 import slop.miho.chumpy.data.DesignStyle
 import slop.miho.chumpy.data.FlagStyle
 import slop.miho.chumpy.data.IconVariant
 import slop.miho.chumpy.data.UiSettings
 import slop.miho.chumpy.db.ProfileEntity
+import slop.miho.chumpy.db.ProfileType
 import slop.miho.chumpy.db.SubscriptionEntity
+import slop.miho.chumpy.sub.LinkSerializer
 import slop.miho.chumpy.ui.HomeUiState
 import slop.miho.chumpy.ui.MainViewModel
 import slop.miho.chumpy.ui.ServersUiState
@@ -83,7 +87,6 @@ import slop.miho.chumpy.ui.wallpapers.WallpaperActivity
 enum class KiranTab(val label: String, val iconRes: Int) {
     HOME("Home", R.drawable.ic_home),
     SERVERS("Servers", R.drawable.ic_servers),
-    ROUTING("Routing", R.drawable.ic_swap_horizontal),
     SETTINGS("Settings", R.drawable.ic_settings),
 }
 
@@ -359,6 +362,17 @@ fun KiranMainShell(
     var showHappSpoofModal by remember { mutableStateOf(false) }
     var showDelayTestModal by remember { mutableStateOf(false) }
     var showLogsModal by remember { mutableStateOf(false) }
+    var showServerEditor by remember { mutableStateOf(false) }
+    var editingProfile by remember { mutableStateOf<ProfileEntity?>(null) }
+    var showPolicyEditor by remember { mutableStateOf(false) }
+    var editingPolicyProfile by remember { mutableStateOf<ProfileEntity?>(null) }
+    var qrExportProfile by remember { mutableStateOf<ProfileEntity?>(null) }
+    var qrExportJson by remember { mutableStateOf("") }
+    var editingSubscription by remember { mutableStateOf<SubscriptionEntity?>(null) }
+    var showCustomRoutingModal by remember { mutableStateOf(false) }
+    var showGeodataModal by remember { mutableStateOf(false) }
+    var showBackupModal by remember { mutableStateOf(false) }
+    var showProxyDnsModal by remember { mutableStateOf(false) }
 
     val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
     val selectedSubscription by viewModel.selectedSubscription.collectAsStateWithLifecycle()
@@ -367,6 +381,11 @@ fun KiranMainShell(
     val coreRunning by viewModel.coreRunning.collectAsStateWithLifecycle()
     val coreLogs by viewModel.coreLogs.collectAsStateWithLifecycle()
     val updateState by viewModel.update.collectAsStateWithLifecycle()
+    val smartSwitchNotice by viewModel.smartSwitchNotice.collectAsStateWithLifecycle()
+
+    LaunchedEffect(qrExportProfile, connectionSettings) {
+        qrExportJson = qrExportProfile?.let { viewModel.buildFullJsonForProfile(it) }.orEmpty()
+    }
 
     BackHandler(enabled = activeTab != KiranTab.HOME) {
         activeTab = KiranTab.HOME
@@ -391,6 +410,36 @@ fun KiranMainShell(
                     onOpenAppearance = { showStyleModal = true },
                     onOpenLogs = { showLogsModal = true },
                 )
+            }
+
+            smartSwitchNotice?.let { notice ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(KiranColors.CardActive)
+                        .clickable { viewModel.dismissSmartSwitchNotice() }
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = notice,
+                        fontFamily = OutfitFont,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = KiranColors.Mint,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "Dismiss",
+                        fontFamily = OutfitFont,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = KiranColors.TextMuted,
+                    )
+                }
             }
 
             Box(
@@ -424,7 +473,7 @@ fun KiranMainShell(
                             },
                             onOpenServers = { activeTab = KiranTab.SERVERS },
                             onRefreshPing = { viewModel.refreshPing(showPending = true) },
-                            onOpenRouting = { activeTab = KiranTab.ROUTING },
+                            onOpenRouting = { activeTab = KiranTab.SETTINGS },
                             onOpenDns = { showDnsModal = true },
                             onUpdateChipTap = { viewModel.onUpdateChipTap() },
                         )
@@ -465,18 +514,30 @@ fun KiranMainShell(
                             onDeleteSelected = { viewModel.deleteProfiles(it) },
                             onExportAll = { viewModel.exportAllProfiles() },
                             onDeleteAll = { viewModel.deleteAllProfiles() },
+                            onNewServer = {
+                                editingProfile = null
+                                showServerEditor = true
+                            },
+                            onNewPolicyGroup = {
+                                editingPolicyProfile = null
+                                showPolicyEditor = true
+                            },
+                            onEditProfile = { profile ->
+                                if (profile.type == ProfileType.BALANCER) {
+                                    editingPolicyProfile = profile
+                                    showPolicyEditor = true
+                                } else {
+                                    editingProfile = profile
+                                    showServerEditor = true
+                                }
+                            },
+                            onShareOrQr = { profile -> qrExportProfile = profile },
+                            onTestSpeed = { profile -> viewModel.testProfileSpeed(profile) },
+                            onEditSubscription = { sub -> editingSubscription = sub },
                         )
 
-                        KiranTab.ROUTING -> KiranRoutingTab(
-                            connectionSettings = connectionSettings,
-                            flagStyle = settings.flagStyle,
-                            onUpdateConnection = { transform -> viewModel.updateConnection(transform) },
-                            onOpenPerAppProxy = onOpenPerAppProxy,
-                            onOpenDnsModal = { showDnsModal = true },
-                            onOpenFragmentModal = { showFragmentModal = true },
-                        )
-
-                        KiranTab.SETTINGS -> KiranSettingsTab(
+                        KiranTab.SETTINGS -> ExpressiveSettingsTab(
+                            isStyleB = false,
                             settings = settings,
                             connectionSettings = connectionSettings,
                             subscriptions = subscriptions,
@@ -493,6 +554,10 @@ fun KiranMainShell(
                             onOpenHappSpoofModal = { showHappSpoofModal = true },
                             onOpenDelayTestModal = { showDelayTestModal = true },
                             onOpenLogsModal = { showLogsModal = true },
+                            onOpenCustomRouting = { showCustomRoutingModal = true },
+                            onOpenGeodataModal = { showGeodataModal = true },
+                            onOpenBackupModal = { showBackupModal = true },
+                            onOpenProxyDnsModal = { showProxyDnsModal = true },
                             onCheckForUpdate = { viewModel.recheckUpdate() },
                             onUpdateAction = { viewModel.onUpdateChipTap() },
                         )
@@ -593,6 +658,88 @@ fun KiranMainShell(
                 coreVersion = coreVersion,
                 pingMillis = home.pingMillis,
                 onDismiss = { showLogsModal = false },
+            )
+        }
+
+        if (showServerEditor) {
+            ServerEditorModal(
+                isStyleB = false,
+                editingProfile = editingProfile,
+                availableChainParents = servers.profiles,
+                onSave = { profile, cb -> viewModel.upsertManualProfile(profile, cb) },
+                onDismiss = { showServerEditor = false },
+            )
+        }
+
+        if (showPolicyEditor) {
+            PolicyGroupEditorModal(
+                isStyleB = false,
+                editingProfile = editingPolicyProfile,
+                candidateServers = servers.profiles,
+                onSave = { profile, cb -> viewModel.upsertManualProfile(profile, cb) },
+                onDismiss = { showPolicyEditor = false },
+            )
+        }
+
+        qrExportProfile?.let { qrProfile ->
+            QrAndExportModal(
+                isStyleB = false,
+                profile = qrProfile,
+                shareUri = LinkSerializer.toShareUri(qrProfile),
+                fullConfigJson = qrExportJson,
+                onDismiss = { qrExportProfile = null },
+            )
+        }
+
+        editingSubscription?.let { sub ->
+            SubscriptionEditModal(
+                isStyleB = false,
+                subscription = sub,
+                onSave = { id, name, url, filterRegex, ua, mins, autoUpd, refresh ->
+                    viewModel.updateSubscriptionEditable(id, name, url, filterRegex, ua, mins, autoUpd, refresh)
+                },
+                onDismiss = { editingSubscription = null },
+            )
+        }
+
+        if (showCustomRoutingModal) {
+            CustomRoutingModal(
+                isStyleB = false,
+                connectionSettings = connectionSettings,
+                onUpdateConnection = { viewModel.updateConnection(it) },
+                onDismiss = { showCustomRoutingModal = false },
+            )
+        }
+
+        if (showGeodataModal) {
+            GeodataManagerModal(
+                isStyleB = false,
+                tunnelUp = isConnected,
+                connectionSettings = connectionSettings,
+                onUpdateConnection = { viewModel.updateConnection(it) },
+                onDismiss = { showGeodataModal = false },
+            )
+        }
+
+        if (showProxyDnsModal) {
+            ProxyAndDnsAdvancedModal(
+                isStyleB = false,
+                connectionSettings = connectionSettings,
+                onUpdateConnection = { viewModel.updateConnection(it) },
+                onDismiss = { showProxyDnsModal = false },
+            )
+        }
+
+        if (showBackupModal) {
+            BackupRestoreModal(
+                isStyleB = false,
+                connectionSettings = connectionSettings,
+                onUpdateConnection = { viewModel.updateConnection(it) },
+                onExportZip = { uri, cb -> viewModel.exportBackupZip(uri, cb) },
+                onImportZip = { uri, cb -> viewModel.importBackupZip(uri, cb) },
+                onUploadWebDav = { cb -> viewModel.uploadWebDav(cb) },
+                onDownloadWebDav = { cb -> viewModel.downloadWebDav(cb) },
+                onDismiss = { showBackupModal = false },
             )
         }
     }
@@ -1103,477 +1250,7 @@ private fun KiranMetricCard(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TAB 3: ROUTING & SPLIT TUNNEL (STYLE A)
-// ─────────────────────────────────────────────────────────────────────────────
-@Composable
-private fun KiranRoutingTab(
-    connectionSettings: ConnectionSettings,
-    flagStyle: FlagStyle,
-    onUpdateConnection: ((ConnectionSettings) -> ConnectionSettings) -> Unit,
-    onOpenPerAppProxy: () -> Unit,
-    onOpenDnsModal: () -> Unit,
-    onOpenFragmentModal: () -> Unit,
-) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 6.dp, bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Text(
-                text = "Routing & Core",
-                fontFamily = OutfitFont,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 30.sp,
-                letterSpacing = (-1).sp,
-                color = KiranColors.TextPrimary,
-            )
-        }
-
-        item {
-            RegionRoutingSelectorCard(
-                isStyleB = false,
-                selectedMode = connectionSettings.routingMode,
-                flagStyle = flagStyle,
-                onSelectMode = { mode ->
-                    onUpdateConnection { it.copy(routingMode = mode) }
-                },
-            )
-        }
-
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(32.dp),
-                color = KiranColors.Card,
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = "Split Tunneling & Filters",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = KiranColors.TextPrimary,
-                    )
-                    Spacer(Modifier.height(10.dp))
-
-                    KiranToggleRow(
-                        title = "Per-App Proxy",
-                        subtitle = if (connectionSettings.perAppEnabled) {
-                            "${connectionSettings.bypassedApps.size} app(s) bypassed"
-                        } else {
-                            "Disabled — routing all apps"
-                        },
-                        checked = connectionSettings.perAppEnabled,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(perAppEnabled = enabled) }
-                        },
-                    )
-                    KiranActionRow(
-                        title = "Manage Bypassed Apps",
-                        subtitle = "Select apps to exclude from VPN tunnel",
-                        valueText = "${connectionSettings.bypassedApps.size} ›",
-                        onClick = onOpenPerAppProxy,
-                    )
-                    KiranToggleRow(
-                        title = "Bypass LAN & Private Subnets",
-                        subtitle = "Keep local devices (192.168.x.x, 10.x.x.x) direct",
-                        checked = connectionSettings.bypassLan,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(bypassLan = enabled) }
-                        },
-                    )
-                    KiranToggleRow(
-                        title = "Bypass Domestic Sites",
-                        subtitle = "Direct routing for local country traffic",
-                        checked = connectionSettings.bypassDomestic,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(bypassDomestic = enabled) }
-                        },
-                    )
-                    KiranToggleRow(
-                        title = "Block Ads & Trackers",
-                        subtitle = "Drop geosite:category-ads-all in Xray core",
-                        checked = connectionSettings.blockAds,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(blockAds = enabled) }
-                        },
-                    )
-                }
-            }
-        }
-
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(32.dp),
-                color = KiranColors.Card,
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = "DNS & Anti-DPI",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = KiranColors.TextPrimary,
-                    )
-                    Spacer(Modifier.height(10.dp))
-
-                    KiranActionRow(
-                        title = "DNS Resolver",
-                        subtitle = "Encrypted DNS over HTTPS inside tunnel",
-                        valueText = "${connectionSettings.dnsProvider} ›",
-                        onClick = onOpenDnsModal,
-                    )
-                    KiranActionRow(
-                        title = "TLS Fragment & Mux",
-                        subtitle = buildString {
-                            append(if (connectionSettings.fragmentEnabled) "Fragment ON (${connectionSettings.fragmentLength})" else "Fragment OFF")
-                            append(" · ")
-                            append(if (connectionSettings.muxEnabled) "Mux ON (${connectionSettings.muxConcurrency})" else "Mux OFF")
-                        },
-                        valueText = "Configure ›",
-                        onClick = onOpenFragmentModal,
-                    )
-                }
-            }
-        }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TAB 4: SETTINGS (STYLE A — FULL FEATURE PARITY WITH STYLE B & CLASSIC)
-// ─────────────────────────────────────────────────────────────────────────────
-@Composable
-private fun KiranSettingsTab(
-    settings: UiSettings,
-    connectionSettings: ConnectionSettings,
-    subscriptions: List<SubscriptionEntity>,
-    coreVersion: String?,
-    coreRunning: Boolean,
-    updateState: UpdateUiState,
-    onUpdateSettings: ((UiSettings) -> UiSettings) -> Unit,
-    onUpdateConnection: ((ConnectionSettings) -> ConnectionSettings) -> Unit,
-    onOpenLauncherIconModal: () -> Unit,
-    onOpenDnsModal: () -> Unit,
-    onOpenFragmentModal: () -> Unit,
-    onOpenPerAppProxy: () -> Unit,
-    onOpenStyleModal: () -> Unit,
-    onOpenHappSpoofModal: () -> Unit,
-    onOpenDelayTestModal: () -> Unit,
-    onOpenLogsModal: () -> Unit,
-    onCheckForUpdate: () -> Unit,
-    onUpdateAction: () -> Unit,
-) {
-    val context = LocalContext.current
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 6.dp, bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Text(
-                text = "Settings",
-                fontFamily = OutfitFont,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 30.sp,
-                letterSpacing = (-1).sp,
-                color = KiranColors.TextPrimary,
-            )
-        }
-
-        // Appearance & Launcher Card
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(32.dp),
-                color = KiranColors.Card,
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = "Appearance & Launcher",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = KiranColors.TextPrimary,
-                    )
-                    Spacer(Modifier.height(10.dp))
-
-                    KiranActionRow(
-                        title = "UI Style, Theme, Fonts & Flags",
-                        subtitle = "Style A · Kiran / Style B · Sarhad · ${settings.themeMode.name}",
-                        valueText = "Customize ›",
-                        onClick = onOpenStyleModal,
-                    )
-                    KiranActionRow(
-                        title = "Launcher Icon",
-                        subtitle = when (settings.iconVariant) {
-                            IconVariant.CHUMPY -> "Hollow Mint"
-                            IconVariant.INVERTED -> "Inverted Mint"
-                            IconVariant.DARK -> "Night Dark"
-                            IconVariant.THEMED -> "Themed Monochrome"
-                        },
-                        valueText = "Change ›",
-                        onClick = onOpenLauncherIconModal,
-                    )
-                    KiranActionRow(
-                        title = "Wallpaper & Backdrop",
-                        subtitle = "Custom image backdrop, blur & dim",
-                        valueText = "Open ›",
-                        onClick = {
-                            context.startActivity(Intent(context, WallpaperActivity::class.java))
-                        },
-                    )
-                    KiranToggleRow(
-                        title = "Mask Server Addresses",
-                        subtitle = "Hide domains, IPs and subscription URLs",
-                        checked = settings.maskAddresses,
-                        onCheckedChange = { enabled ->
-                            onUpdateSettings { it.copy(maskAddresses = enabled) }
-                        },
-                    )
-                }
-            }
-        }
-
-        // Connection & Protection (Migrated from Classic Connection Settings)
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(32.dp),
-                color = KiranColors.Card,
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = "Connection & Protection",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = KiranColors.TextPrimary,
-                    )
-                    Spacer(Modifier.height(10.dp))
-
-                    KiranToggleRow(
-                        title = "Auto Reconnect",
-                        subtitle = "Automatically restore tunnel after network drops or VPN restarts",
-                        checked = connectionSettings.autoReconnect,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(autoReconnect = enabled) }
-                        },
-                    )
-                    KiranToggleRow(
-                        title = "Kill Switch",
-                        subtitle = "Prevent leaks if VPN disconnects unexpectedly",
-                        checked = connectionSettings.killSwitch,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(killSwitch = enabled) }
-                        },
-                    )
-                    KiranToggleRow(
-                        title = "Untrusted Wi-Fi Auto-Connect",
-                        subtitle = "Automatically enable VPN on open or unfamiliar Wi-Fi",
-                        checked = connectionSettings.autoConnectUntrustedWifi,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(autoConnectUntrustedWifi = enabled) }
-                        },
-                    )
-                    KiranToggleRow(
-                        title = "Start on Boot",
-                        subtitle = "Start Hollow VPN automatically after device restart",
-                        checked = connectionSettings.startOnBoot,
-                        onCheckedChange = { enabled ->
-                            onUpdateConnection { it.copy(startOnBoot = enabled) }
-                        },
-                    )
-                    KiranActionRow(
-                        title = "Per-App Proxy",
-                        subtitle = "${connectionSettings.bypassedApps.size} app(s) bypassed",
-                        valueText = "Open ›",
-                        onClick = onOpenPerAppProxy,
-                    )
-                    KiranActionRow(
-                        title = "DNS Resolver",
-                        subtitle = connectionSettings.dnsProvider,
-                        valueText = "Edit ›",
-                        onClick = onOpenDnsModal,
-                    )
-                    KiranActionRow(
-                        title = "TLS Fragment & Mux",
-                        subtitle = "Anti-DPI packet splitting & multiplexing",
-                        valueText = "Edit ›",
-                        onClick = onOpenFragmentModal,
-                    )
-                }
-            }
-        }
-
-        // Subscriptions, Spoof & Diagnostics
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(32.dp),
-                color = KiranColors.Card,
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = "Subscriptions & Diagnostics",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = KiranColors.TextPrimary,
-                    )
-                    Spacer(Modifier.height(10.dp))
-
-                    KiranActionRow(
-                        title = "Delay Test URL & Auto-Update",
-                        subtitle = "${subscriptions.count { it.autoUpdate }}/${subscriptions.size} auto-refresh · ${connectionSettings.delayTestUrl}",
-                        valueText = "Configure ›",
-                        onClick = onOpenDelayTestModal,
-                    )
-                    KiranActionRow(
-                        title = "Spoof as Happ",
-                        subtitle = if (settings.happSpoof) "Active (${settings.happDeviceModel})" else "Disabled",
-                        valueText = "Configure ›",
-                        onClick = onOpenHappSpoofModal,
-                    )
-                    KiranActionRow(
-                        title = "Xray Core Logs",
-                        subtitle = if (coreRunning) "Core running · Tap to inspect live logs" else "View diagnostics & last session logs",
-                        valueText = "Logs ›",
-                        onClick = onOpenLogsModal,
-                    )
-                }
-            }
-        }
-
-        // About & Updates
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(32.dp),
-                color = KiranColors.Card,
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = "About Hollow VPN",
-                        fontFamily = OutfitFont,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = KiranColors.TextPrimary,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    KiranActionRow(
-                        title = "App Version",
-                        subtitle = "v${BuildConfig.VERSION_NAME} · ${coreVersion ?: "Xray-core ready"}",
-                        valueText = if (updateState.checking) "Checking…" else "Check updates",
-                        onClick = onCheckForUpdate,
-                    )
-                    if (updateState.available != null) {
-                        KiranActionRow(
-                            title = "Release ${updateState.available.tag}",
-                            subtitle = when {
-                                updateState.downloadedFile != null -> "APK downloaded and ready"
-                                updateState.downloading -> "Downloading ${updateState.downloadPercent}%"
-                                else -> "Tap to download latest APK"
-                            },
-                            valueText = if (updateState.downloadedFile != null) "Install" else "Download",
-                            onClick = onUpdateAction,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun KiranToggleRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
-            .padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                fontFamily = OutfitFont,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp,
-                color = KiranColors.TextPrimary,
-            )
-            Text(
-                text = subtitle,
-                fontFamily = OutfitFont,
-                fontSize = 12.sp,
-                color = KiranColors.TextMuted,
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        ExpressiveSwitch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            activeTrackColor = KiranColors.Mint,
-            activeThumbColor = KiranColors.OnMint,
-            inactiveTrackColor = KiranColors.SwitchOffBg,
-            inactiveThumbColor = KiranColors.TextMuted,
-        )
-    }
-}
-
-@Composable
-private fun KiranActionRow(
-    title: String,
-    subtitle: String,
-    valueText: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                fontFamily = OutfitFont,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp,
-                color = KiranColors.TextPrimary,
-            )
-            Text(
-                text = subtitle,
-                fontFamily = OutfitFont,
-                fontSize = 12.sp,
-                color = KiranColors.TextMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = valueText,
-            fontFamily = OutfitFont,
-            fontWeight = FontWeight.Bold,
-            fontSize = 13.sp,
-            color = KiranColors.Mint,
-        )
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BOTTOM NAVIGATION DOCK (STYLE A — 4-TAB PILL BAR)
+// BOTTOM NAVIGATION DOCK (STYLE A — 3-TAB PILL BAR)
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun KiranBottomDock(

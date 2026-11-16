@@ -254,16 +254,21 @@ fun MainShell(viewModel: MainViewModel) {
     // right one; picking Home leaves the right half to the wallpaper alone.
     val wide = isWideScreen()
 
-    // The connect ask rides the VPN permission the same way whichever pane asks for it.
-    val connectWithConsent: () -> Unit = {
-        val consent = VpnService.prepare(context)
-        if (consent != null) vpnPermission.launch(consent) else viewModel.connect()
-    }
-
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val connectionSettings by viewModel.connection.collectAsStateWithLifecycle()
     val selectedProfile by viewModel.selectedProfile.collectAsStateWithLifecycle()
     val coreVersion by viewModel.coreVersion.collectAsStateWithLifecycle()
+
+    // The connect ask rides the VPN permission the same way whichever pane asks for it.
+    // In Proxy-Only mode we run local SOCKS/HTTP listeners without a TUN interface.
+    val connectWithConsent: () -> Unit = {
+        if (connectionSettings.proxyOnlyMode) {
+            viewModel.connect()
+        } else {
+            val consent = VpnService.prepare(context)
+            if (consent != null) vpnPermission.launch(consent) else viewModel.connect()
+        }
+    }
     val scope = rememberCoroutineScope()
     val qrScanner = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),

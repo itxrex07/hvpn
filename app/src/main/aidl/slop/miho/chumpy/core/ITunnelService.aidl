@@ -28,6 +28,12 @@ interface ITunnelService {
      */
     long measureLiveDelay(String testUrl);
 
+    /**
+     * Measures single-stream download throughput (Mbps) through [configJson] bound to
+     * loopback SOCKS [socksPort]. Returns -1.0 on failure.
+     */
+    double measureThroughput(String configJson, int socksPort);
+
     /** The Xray core version string, for the about screen. */
     String coreVersion();
 

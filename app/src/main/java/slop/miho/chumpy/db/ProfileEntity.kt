@@ -13,8 +13,10 @@ enum class ProfileType {
     TROJAN,
     SHADOWSOCKS,
     SOCKS,
+    HTTP,
     WIREGUARD,
     HYSTERIA2,
+    CUSTOM_JSON,
 
     /** Not a server: a routing balancer over the subscription's other profiles. */
     BALANCER,
@@ -56,11 +58,11 @@ data class ProfileEntity(
     // Endpoint and authentication.
     val server: String = "",
     val serverPort: Int = 0,
-    /** VMess UUID, VLESS id, Trojan/SS/Hy2 password, SOCKS pass. */
+    /** VMess UUID, VLESS id, Trojan/SS/Hy2 password, SOCKS/HTTP pass. */
     val password: String = "",
     /** SS cipher; VMess security; VLESS encryption. */
     val method: String = "",
-    /** SOCKS user. */
+    /** SOCKS / HTTP user. */
     val username: String = "",
 
     // Transport.
@@ -114,68 +116,36 @@ data class ProfileEntity(
     val balancerMembers: String = "",
 
     // Routing (profiles imported from raw configs).
-    /**
-     * The routing rules the panel's own config carried, as a raw JSON array — BetterExclave's
-     * profileRoutingRules. The panel's intent for its servers: bypass lists, ad and QUIC
-     * blocks, BT direct. Rewritten onto this session's tags at build time; empty when the
-     * config carried nothing usable.
-     */
     val routingRules: String = "",
     val geodataSources: String = "",
 
-    /**
-     * BetterExclave's hidden: the row is the balancer's internal, not a server to show —
-     * an aggregator config's outbounds, all of them, the moment the config's balancer
-     * survives. The row stays in the store (the balancer's members resolve by linkKey;
-     * a solo config naming the same server un-hides it), only the list omits it.
-     */
     val hidden: Boolean = false,
 
     // Measurements.
     /** The last real ping through the core, in millis; null when never measured. */
     val testDelayMillis: Long? = null,
     val lastTestAt: Long? = null,
-    /**
-     * When the row was last picked as the profile a connect uses; null when never.
-     * A state like the ping, not a trait like the port — it rides the row's identity
-     * through subscription updates, and never enters the link key.
-     */
+    /** Measured single-stream throughput in Mbps; null when not measured. */
+    val speedMbps: Double? = null,
     val lastUsedAt: Long? = null,
 
-    /**
-     * The pin the row menu drives: pinned rows stand the list's ground floor, first
-     * whatever the panel's order says. A state like the ping, not a trait like the
-     * port — it rides the row's identity through subscription updates, and never
-     * enters the link key.
-     */
     val pinned: Boolean = false,
-
-    /**
-     * The user's own hide — the row menu's "Hide": the row stays in the store but the
-     * list keeps it out of sight, the header's chip holding the count and the door back.
-     * A state like the pin, not a trait like the port — it rides the row's identity
-     * through subscription updates, and never enters the link key. Not the balancer's
-     * own [hidden]: that one is the parser's plumbing, this one is the user's choice.
-     */
     val concealed: Boolean = false,
 
-    /**
-     * A digest of everything that defines the server. Subscription updates diff on it: a
-     * profile whose linkKey survives an update keeps its identity, its selection state and
-     * its last ping.
-     */
+    /** Optional parent profile ID to chain through (Xray sockopt.dialerProxy). */
+    val dialerProxyId: String = "",
+    /** Full or outbound raw Xray JSON for CUSTOM_JSON profiles. */
+    val rawConfigJson: String = "",
+
     val linkKey: String = "",
 )
 
 /** The canonical digest used for update diffing; see [linkKey]. */
 fun ProfileEntity.computeLinkKey(): String {
-    // A balancer is its name and its strategy, not its members: the panel reshuffles the
-    // members between updates, and the balancer — its row's identity, the selection
-    // riding on it — is meant to survive that, as BetterExclave's by-name updates do.
-    val canonical = if (type == ProfileType.BALANCER) {
-        listOf(type.name, remarks, balancerStrategy)
-    } else {
-        listOf(
+    val canonical = when (type) {
+        ProfileType.BALANCER -> listOf(type.name, remarks, balancerStrategy)
+        ProfileType.CUSTOM_JSON -> listOf(type.name, remarks, rawConfigJson)
+        else -> listOf(
             type.name,
             server,
             serverPort.toString(),
@@ -208,6 +178,7 @@ fun ProfileEntity.computeLinkKey(): String {
             wgLocalAddress,
             wgMtu.toString(),
             wgReserved,
+            dialerProxyId,
         )
     }.joinToString("\u0001")
     val digest = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))

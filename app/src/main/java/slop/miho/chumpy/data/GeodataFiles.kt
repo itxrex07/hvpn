@@ -4,7 +4,12 @@ import android.content.Context
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.json.*
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import slop.miho.chumpy.R
 import slop.miho.chumpy.sub.GeodataSources
 import java.io.File
@@ -42,7 +47,13 @@ internal object GeodataFiles {
         }
     }
 
-    suspend fun prepare(context: Context, config: String, sources: String, allowStandardFallback: Boolean = false, fetch: suspend (String, File) -> Unit): String = mutex.withLock {
+    suspend fun prepare(
+        context: Context,
+        config: String,
+        sources: String,
+        allowStandardFallback: Boolean = false,
+        fetch: suspend (String, File) -> Unit,
+    ): String = mutex.withLock {
         val root = json.parseToJsonElement(config) as JsonObject
         val refs = references(root)
         val urls = GeodataSources.parse(sources).values.associateBy { GeodataSources.filenameFor(it) }
@@ -52,17 +63,33 @@ internal object GeodataFiles {
             val categories = requested.map { it.category.removePrefix("!").substringBefore('@').uppercase(Locale.ROOT) }.toSet()
             var url = urls[name]
             if (url == null) {
+                val customInstalled = File(directory, name)
                 val available = try {
-                    if (name == "geosite.dat" || name == "geoip.dat") context.assets.open(name).use(::categories)
-                    else File(directory, name).inputStream().use(::categories)
-                } catch (_: IOException) { emptySet() }
+                    when {
+                        (name == "geosite.dat" || name == "geoip.dat") && customInstalled.isFile && customInstalled.length() > 0L ->
+                            customInstalled.inputStream().use(::categories)
+                        name == "geosite.dat" || name == "geoip.dat" ->
+                            context.assets.open(name).use(::categories)
+                        customInstalled.isFile ->
+                            customInstalled.inputStream().use(::categories)
+                        else -> emptySet()
+                    }
+                } catch (_: Exception) {
+                    // If a custom downloaded file was corrupted/truncated, fall back cleanly to bundled APK asset
+                    runCatching {
+                        if (name == "geosite.dat" || name == "geoip.dat") context.assets.open(name).use(::categories)
+                        else emptySet()
+                    }.getOrDefault(emptySet())
+                }
                 val missing = categories - available
                 if (missing.isEmpty()) continue
                 if (allowStandardFallback && name == "geosite.dat") {
-                    url = "https://github.com/XTLS/Xray-rules-dat/releases/latest/download/geosite.dat.gz"
+                    url = "https://github.com/XTLS/Xray-rules-dat/releases/latest/download/geosite.dat"
                 } else if (allowStandardFallback && name == "geoip.dat") {
-                    url = "https://github.com/XTLS/Xray-rules-dat/releases/latest/download/geoip.dat.gz"
-                } else throw IOException(context.getString(R.string.error_geodata_source_missing, name, missing.sorted().joinToString(", ")))
+                    url = "https://github.com/XTLS/Xray-rules-dat/releases/latest/download/geoip.dat"
+                } else {
+                    throw IOException(context.getString(R.string.error_geodata_source_missing, name, missing.sorted().joinToString(", ")))
+                }
             }
             val pointer = File(directory, "${GeodataSources.filenameFor(url)}.cache")
             val cachedName = runCatching { pointer.readText().takeIf { it.length <= 180 && GeodataSources.validFilename(it) } }.getOrNull()
@@ -76,24 +103,41 @@ internal object GeodataFiles {
                 val temporary = File.createTempFile("geodata-", ".part", directory)
                 try {
                     fetch(url, temporary)
-                    val present = temporary.inputStream().use(::categories)
-                    if (!present.containsAll(categories)) throw IOException(context.getString(R.string.error_geodata_categories, categories.minus(present).sorted().joinToString(", ")))
+                    val present = runCatching { temporary.inputStream().use(::categories) }
+                        .getOrElse { err -> throw IOException(err.message ?: "Truncated geodata", err) }
+                    if (!present.containsAll(categories)) {
+                        throw IOException(context.getString(R.string.error_geodata_categories, categories.minus(present).sorted().joinToString(", ")))
+                    }
                     val digest = MessageDigest.getInstance("SHA-256")
                     temporary.inputStream().use { input ->
                         val buffer = ByteArray(64 * 1024)
-                        while (true) { val count = input.read(buffer); if (count < 0) break; digest.update(buffer, 0, count) }
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            digest.update(buffer, 0, count)
+                        }
                     }
                     val hash = digest.digest().joinToString("") { "%02x".format(it) }
                     val target = File(directory, "provider-$hash.dat")
-                    if (target.exists()) { temporary.delete(); target.setLastModified(System.currentTimeMillis()) }
-                    else if (!temporary.renameTo(target)) throw IOException("Could not store geodata")
+                    if (target.exists()) {
+                        temporary.delete()
+                        target.setLastModified(System.currentTimeMillis())
+                    } else if (!temporary.renameTo(target)) {
+                        throw IOException("Could not store geodata")
+                    }
                     AtomicSnapshot.write(pointer, target.name)
                     target
-                } catch (e: CancellationException) { throw e }
-                catch (e: Exception) {
-                    if (cached != null && cached.isFile && runCatching { cached.inputStream().use(::categories).containsAll(categories) }.getOrDefault(false)) cached
-                    else throw IOException(context.getString(R.string.error_geodata_download, e.message ?: "unknown"), e)
-                } finally { temporary.delete() }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (cached != null && cached.isFile && runCatching { cached.inputStream().use(::categories).containsAll(categories) }.getOrDefault(false)) {
+                        cached
+                    } else {
+                        throw IOException(context.getString(R.string.error_geodata_download, e.message ?: "unknown"), e)
+                    }
+                } finally {
+                    temporary.delete()
+                }
             }
             replacements[name] = selected.name
         }
@@ -112,15 +156,35 @@ internal object GeodataFiles {
             }
         }
         val routing = root["routing"] as? JsonObject
-        val prepared = if (routing == null) root.toString() else JsonObject(root + ("routing" to JsonObject(routing.mapValues { (key, value) ->
-            if (key != "rules" || value !is JsonArray) value else JsonArray(value.map { rule ->
-                if (rule !is JsonObject) rule else JsonObject(rule.mapValues { (field, item) ->
-                    if (field in setOf("domain", "ip", "source")) replace(item) else item
-                })
-            })
-        }))).toString()
+        val prepared = if (routing == null) root.toString() else JsonObject(
+            root + (
+                "routing" to JsonObject(
+                    routing.mapValues { (key, value) ->
+                        if (key != "rules" || value !is JsonArray) {
+                            value
+                        } else {
+                            JsonArray(
+                                value.map { rule ->
+                                    if (rule !is JsonObject) {
+                                        rule
+                                    } else {
+                                        JsonObject(
+                                            rule.mapValues { (field, item) ->
+                                                if (field in setOf("domain", "ip", "source")) replace(item) else item
+                                            },
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                    },
+                )
+            ),
+        ).toString()
         val protected = references(json.parseToJsonElement(prepared) as JsonObject).map { it.file }.toSet() +
-            runCatching { references(json.parseToJsonElement(slop.miho.chumpy.core.CoreConfigFile.readConfig(context).orEmpty()) as JsonObject).map { it.file } }.getOrDefault(emptyList())
+            runCatching {
+                references(json.parseToJsonElement(slop.miho.chumpy.core.CoreConfigFile.readConfig(context).orEmpty()) as JsonObject).map { it.file }
+            }.getOrDefault(emptyList())
         val cutoff = System.currentTimeMillis() - 7 * 86_400_000L
         directory.listFiles()?.filter { file ->
             file.name.startsWith("provider-") && file.extension == "dat" && file.name !in protected && file.lastModified() < cutoff
@@ -137,26 +201,33 @@ internal object GeodataFiles {
             val tag = varint(input, eof = true) ?: break
             require(++entries <= 100_000) { "Too many geodata categories" }
             require(tag == 10L) { "Invalid geodata container" }
-            val length = varint(input)!!
+            val length = varint(input) ?: throw IOException("Truncated geodata")
             require(length in 1..MAX_BYTES && total + length <= MAX_BYTES) { "Geodata size limit" }
             total += length
             val entry = LimitedInput(input, length)
             var name: String? = null
             while (entry.remaining > 0) {
-                val field = varint(entry)!!
+                val field = varint(entry) ?: throw IOException("Truncated geodata")
                 require(field shr 3 > 0) { "Invalid geodata field" }
                 when ((field and 7).toInt()) {
                     0 -> varint(entry)
                     1 -> skip(entry, 8)
                     2 -> {
-                        val size = varint(entry)!!
-                        require(size <= entry.remaining) { "Truncated geodata" }
+                        val size = varint(entry) ?: throw IOException("Truncated geodata")
+                        if (size > entry.remaining) throw IOException("Truncated geodata")
                         if (field shr 3 == 1L) {
                             require(size in 1..256) { "Invalid category" }
                             val bytes = ByteArray(size.toInt())
-                            for (index in bytes.indices) bytes[index] = entry.read().also { require(it >= 0) }.toByte()
+                            var offset = 0
+                            while (offset < bytes.size) {
+                                val n = entry.read(bytes, offset, bytes.size - offset)
+                                if (n < 0) throw IOException("Truncated geodata")
+                                offset += n
+                            }
                             name = bytes.toString(Charsets.UTF_8).uppercase(Locale.ROOT)
-                        } else skip(entry, size)
+                        } else {
+                            skip(entry, size)
+                        }
                     }
                     5 -> skip(entry, 4)
                     else -> throw IOException("Invalid geodata wire type")
@@ -173,7 +244,10 @@ internal object GeodataFiles {
         var value = 0L
         for (shift in 0..63 step 7) {
             val next = input.read()
-            if (next < 0) { if (shift == 0 && eof) return null; throw IOException("Truncated geodata") }
+            if (next < 0) {
+                if (shift == 0 && eof) return null
+                throw IOException("Truncated geodata")
+            }
             if (shift == 63 && next > 1) throw IOException("Invalid varint")
             value = value or ((next and 127).toLong() shl shift)
             if (next and 128 == 0) return value.also { require(it >= 0) }
@@ -186,16 +260,38 @@ internal object GeodataFiles {
         var remaining = length
         while (remaining > 0) {
             val skipped = input.skip(remaining)
-            if (skipped > 0) remaining -= skipped
-            else { if (input.read() < 0) throw IOException("Truncated geodata"); remaining-- }
+            if (skipped > 0) {
+                remaining -= skipped
+            } else {
+                if (input.read() < 0) throw IOException("Truncated geodata")
+                remaining--
+            }
         }
     }
 
     private class LimitedInput(private val source: InputStream, var remaining: Long) : InputStream() {
         override fun read(): Int {
-            if (remaining == 0L) return -1
-            return source.read().also { if (it < 0) throw IOException("Truncated geodata"); remaining-- }
+            if (remaining <= 0L) return -1
+            return source.read().also {
+                if (it < 0) throw IOException("Truncated geodata")
+                remaining--
+            }
         }
-        override fun skip(n: Long): Long = source.skip(minOf(n, remaining)).also { remaining -= it }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            if (remaining <= 0L) return -1
+            val toRead = minOf(len.toLong(), remaining).toInt()
+            val n = source.read(b, off, toRead)
+            if (n < 0) throw IOException("Truncated geodata")
+            remaining -= n
+            return n
+        }
+
+        override fun skip(n: Long): Long {
+            if (n <= 0L || remaining <= 0L) return 0L
+            val skipped = source.skip(minOf(n, remaining)).coerceAtLeast(0L)
+            remaining -= skipped
+            return skipped
+        }
     }
 }

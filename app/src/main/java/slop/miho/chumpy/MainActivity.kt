@@ -155,17 +155,26 @@ class MainActivity : ControllerActivity() {
         // The update notification's tap on a cold start: the request rides the launching
         // intent, and the view model reads the downloaded file from its store.
         handleInstallRequest(intent)
+        handleIncomingDeepLink(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         handleInstallRequest(intent)
+        handleIncomingDeepLink(intent)
     }
 
     /** The update notification's tap: re-held by the live instance when one exists. */
     private fun handleInstallRequest(intent: Intent?) {
         if (intent?.getBooleanExtra(EXTRA_INSTALL_UPDATE, false) != true) return
         ViewModelProvider(this)[MainViewModel::class.java].installUpdate()
+    }
+
+    private fun handleIncomingDeepLink(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val uriString = intent.dataString ?: return
+        ViewModelProvider(this)[MainViewModel::class.java].handleIncomingUri(uriString)
     }
 
     override fun onStart() {

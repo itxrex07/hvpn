@@ -71,15 +71,27 @@ class SubscriptionRepository(
     suspend fun profileCount(): Int = profiles.count()
 
     /** Fetches, parses and stores a new subscription; the URL is the identity. */
-    suspend fun addSubscription(url: String, name: String? = null): Result<SubscriptionEntity> =
+    suspend fun addSubscription(
+        url: String,
+        name: String? = null,
+        filterRegex: String = "",
+        customUserAgent: String = "",
+        updateIntervalMinutes: Int? = null,
+    ): Result<SubscriptionEntity> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val (body, metadata) = fetchWithNestedExpansion(url)
+                val useMirrors = slop.miho.chumpy.data.ConnectionStore.current(context).cdnMirrorFallback
+                val (body, metadata) = fetchWithNestedExpansion(
+                    url = url,
+                    userAgentOverride = customUserAgent.ifBlank { null },
+                    useCdnMirrors = useMirrors,
+                )
                 val headerSources = GeodataSources.parseSafely(metadata.geodataSources)
-                val parsed = SubscriptionParser.parse(body).map {
+                val allParsed = SubscriptionParser.parse(body).map {
                     it.copy(geodataSources = GeodataSources.merge(headerSources, it.geodataSources))
                 }
-                require(parsed.isNotEmpty()) { "No server links found in the response" }
+                val parsed = applyFilterRegex(allParsed, filterRegex)
+                require(parsed.isNotEmpty()) { "No server links found (or all excluded by filter)" }
 
                 val id = UUID.randomUUID().toString()
                 val entity = SubscriptionEntity(
@@ -96,6 +108,9 @@ class SubscriptionRepository(
                     totalBytes = metadata.totalBytes,
                     expireEpochSeconds = metadata.expireEpochSeconds,
                     logoPath = refreshLogo(id, metadata.logoUrl, previousPath = null),
+                    filterRegex = filterRegex.trim(),
+                    customUserAgent = customUserAgent.trim(),
+                    updateIntervalMinutes = updateIntervalMinutes,
                 )
                 db.withTransaction {
                     subscriptions.upsert(entity)
@@ -115,15 +130,19 @@ class SubscriptionRepository(
                     val entity = subscriptions.byId(id) ?: error("Subscription not found")
                     val attemptAt = System.currentTimeMillis()
                     try {
-                        val (body, metadata) = fetchWithNestedExpansion(entity.url)
+                        val useMirrors = slop.miho.chumpy.data.ConnectionStore.current(context).cdnMirrorFallback
+                        val (body, metadata) = fetchWithNestedExpansion(
+                            url = entity.url,
+                            userAgentOverride = entity.customUserAgent.ifBlank { null },
+                            useCdnMirrors = useMirrors,
+                        )
                         val headerSources = GeodataSources.parseSafely(metadata.geodataSources)
-                        val parsed = SubscriptionParser.parse(body).map {
+                        val allParsed = SubscriptionParser.parse(body).map {
                             it.copy(geodataSources = GeodataSources.merge(headerSources, it.geodataSources))
                         }
-                        require(parsed.isNotEmpty()) { "No server links found in the response" }
+                        val parsed = applyFilterRegex(allParsed, entity.filterRegex)
+                        require(parsed.isNotEmpty()) { "No server links found (or all excluded by filter)" }
 
-                        // The avatar rides the same refresh; its download happens outside
-                        // the transaction — the DB is not held open over the network.
                         val logoPath = refreshLogo(id, metadata.logoUrl, previousPath = entity.logoPath)
                         val updated = db.withTransaction {
                             val current = subscriptions.byId(id) ?: error("Subscription not found")
@@ -149,13 +168,36 @@ class SubscriptionRepository(
                         updated
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
-                        // The failure lands on the card, not in a toast that is gone in a second.
                         subscriptions.setUpdateError(id, attemptAt, e.message ?: e.javaClass.simpleName)
                         throw e
                     }
                 }.onFailure { logFailure("update", id, it) }
             }
         }
+
+    suspend fun updateSubscriptionEditable(
+        id: String,
+        name: String,
+        url: String,
+        filterRegex: String,
+        customUserAgent: String,
+        updateIntervalMinutes: Int?,
+        autoUpdate: Boolean,
+    ) = withContext(Dispatchers.IO) {
+        val current = subscriptions.byId(id) ?: return@withContext
+        subscriptions.updateEditable(
+            id = id,
+            name = name.trim().ifBlank { current.name },
+            url = url.trim().ifBlank { current.url },
+            filterRegex = filterRegex.trim(),
+            customUserAgent = customUserAgent.trim(),
+            updateIntervalMinutes = updateIntervalMinutes,
+            autoUpdate = autoUpdate,
+        )
+        val refreshed = subscriptions.byId(id) ?: return@withContext
+        if (refreshed.autoUpdate) scheduleAutoUpdate(refreshed)
+        else WorkManager.getInstance(context).cancelUniqueWork(WORK_PREFIX + id)
+    }
 
     suspend fun prepareGeodata(profile: ProfileEntity, config: String, importedRouting: Boolean): String =
         slop.miho.chumpy.data.GeodataFiles.prepare(context, config, profile.geodataSources, importedRouting, fetcher::fetchGeodata)
@@ -253,6 +295,53 @@ class SubscriptionRepository(
     suspend fun setProfileDelay(id: String, delayMillis: Long?, testedAt: Long) =
         withContext(Dispatchers.IO) { profiles.setDelay(id, delayMillis, testedAt) }
 
+    suspend fun setProfileSpeed(id: String, speedMbps: Double?, testedAt: Long) =
+        withContext(Dispatchers.IO) { profiles.setSpeed(id, speedMbps, testedAt) }
+
+    suspend fun upsertProfile(profile: ProfileEntity): ProfileEntity = withContext(Dispatchers.IO) {
+        val normalizedId = profile.id.ifBlank { UUID.randomUUID().toString() }
+        val existing = profiles.byId(normalizedId)
+        val order = if (existing != null) existing.order else {
+            val siblings = profiles.bySubscriptionOnce(profile.subscriptionId)
+            (siblings.maxOfOrNull { it.order } ?: -1L) + 1L
+        }
+        val toStore = profile.copy(
+            id = normalizedId,
+            order = order,
+            linkKey = profile.computeLinkKey(),
+        )
+        profiles.upsert(toStore)
+        toStore
+    }
+
+    suspend fun allProfilesOnce(): List<ProfileEntity> = withContext(Dispatchers.IO) {
+        profiles.allOnce()
+    }
+
+    suspend fun allSubscriptionsOnce(): List<SubscriptionEntity> = withContext(Dispatchers.IO) {
+        subscriptions.allOnce()
+    }
+
+    suspend fun restoreBackupData(
+        restoredSubs: List<SubscriptionEntity>,
+        restoredProfiles: List<ProfileEntity>,
+    ) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            val validSubIds = restoredSubs.map { it.id }.toSet()
+            restoredSubs.forEach { subscriptions.upsert(it) }
+            restoredProfiles.forEach { profile ->
+                val subId = profile.subscriptionId?.takeIf { it in validSubIds }
+                profiles.upsert(
+                    profile.copy(
+                        subscriptionId = subId,
+                        linkKey = profile.linkKey.ifBlank { profile.computeLinkKey() },
+                    ),
+                )
+            }
+        }
+        restoredSubs.filter { it.autoUpdate }.forEach { scheduleAutoUpdate(it) }
+    }
+
     /** Marks a row as just used — the pick that made it the connect's profile. */
     suspend fun setProfileLastUsed(id: String, usedAt: Long) =
         withContext(Dispatchers.IO) { profiles.setLastUsed(id, usedAt) }
@@ -308,17 +397,40 @@ class SubscriptionRepository(
      * subscription. One level of expansion, Hiddify-style, covers the panels that do it.
      * The second fetch dresses up the same way the first did — the fingerprint is global.
      */
-    private suspend fun fetchWithNestedExpansion(url: String): Pair<String, SubscriptionMetadata> {
-        val first = fetcher.fetch(url)
+    private suspend fun fetchWithNestedExpansion(
+        url: String,
+        userAgentOverride: String? = null,
+        useCdnMirrors: Boolean = true,
+    ): Pair<String, SubscriptionMetadata> {
+        val first = fetcher.fetch(url, userAgentOverride = userAgentOverride, useCdnMirrors = useCdnMirrors)
         val nested = SubscriptionParser.isNestedSubscriptionUrl(first.body)
             ?.takeIf { it != url }
             ?: return first.body to first.metadata
         Log.d(TAG, "Subscription is nested; following one level")
-        val second = fetcher.fetch(nested)
+        val second = fetcher.fetch(nested, userAgentOverride = userAgentOverride, useCdnMirrors = useCdnMirrors)
         // The nested response is the real one: its sources override the outer's per key.
         return second.body to second.metadata.copy(
             geodataSources = GeodataSources.merge(first.metadata.geodataSources, second.metadata.geodataSources),
         )
+    }
+
+    /**
+     * Filters parsed profiles with an optional regex rule:
+     * prefixing `!` excludes matching profiles; otherwise only matching profiles are kept.
+     */
+    private fun applyFilterRegex(items: List<ProfileEntity>, filterRegex: String): List<ProfileEntity> {
+        val raw = filterRegex.trim()
+        if (raw.isEmpty()) return items
+        val exclude = raw.startsWith("!")
+        val patternText = if (exclude) raw.removePrefix("!").trim() else raw
+        if (patternText.isEmpty()) return items
+        val regex = runCatching { Regex(patternText, RegexOption.IGNORE_CASE) }.getOrNull() ?: return items
+        return items.filter { p ->
+            val matched = regex.containsMatchIn(p.remarks) ||
+                regex.containsMatchIn(p.server) ||
+                regex.containsMatchIn(p.type.name)
+            if (exclude) !matched else matched
+        }
     }
 
     /** The logo's own home: files/subscription-logos/<id>.img. */
@@ -366,9 +478,11 @@ class SubscriptionRepository(
 
     private fun scheduleAutoUpdate(subscription: SubscriptionEntity) {
         if (!subscription.autoUpdate) return
-        val hours = (subscription.updateIntervalHours?.toLong() ?: DEFAULT_UPDATE_HOURS)
-            .coerceIn(MIN_UPDATE_HOURS, MAX_UPDATE_HOURS)
-        val request = PeriodicWorkRequestBuilder<SubscriptionUpdateWorker>(hours, TimeUnit.HOURS)
+        val minutes = subscription.updateIntervalMinutes?.toLong()
+            ?.coerceIn(15L, MAX_UPDATE_HOURS * 60L)
+            ?: ((subscription.updateIntervalHours?.toLong() ?: DEFAULT_UPDATE_HOURS)
+                .coerceIn(MIN_UPDATE_HOURS, MAX_UPDATE_HOURS) * 60L)
+        val request = PeriodicWorkRequestBuilder<SubscriptionUpdateWorker>(minutes, TimeUnit.MINUTES)
             .setInputData(workDataOf(SubscriptionUpdateWorker.KEY_SUBSCRIPTION_ID to subscription.id))
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setBackoffCriteria(BackoffPolicy.LINEAR, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)

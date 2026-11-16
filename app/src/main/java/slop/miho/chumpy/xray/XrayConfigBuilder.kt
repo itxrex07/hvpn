@@ -4,22 +4,17 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import slop.miho.chumpy.data.CustomRoutingRule
+import slop.miho.chumpy.data.RoutingRuleAction
+import slop.miho.chumpy.data.RoutingRuleMatchType
 import slop.miho.chumpy.db.ProfileEntity
 import slop.miho.chumpy.db.ProfileType
 
-/**
- * Routing intent of a session: everything through the tunnel, or everything but the
- * geo-RU block. The rule sets mirror v2rayNG's global and "white Russia" presets.
- */
-/**
- * The routing modes: one bypass region each — the region's own sites and addresses go
- * direct, the rest rides the proxy — with the whole-world mode last. The region set is
- * the panels' own (hiddify's ir/cn/ru/af/id/tr/br, v2rayNG's Russia and Iran presets).
- */
 enum class RoutingMode(val region: String?) {
     GLOBAL(null),
     BYPASS_RU("ru"),
@@ -31,55 +26,26 @@ enum class RoutingMode(val region: String?) {
     BYPASS_BR("br"),
 }
 
-/**
- * Assembles the complete Xray config documents the core runs: the full VPN config (TUN +
- * local SOCKS inbounds, the selected proxy, direct/block outbounds, routing by
- * [RoutingMode]) and the bare single-outbound document used for delay measurements.
- *
- * Everything is plain JSON string building over [OutboundBuilder] — the core takes a JSON
- * document, the UI is the only place it is produced.
- */
 object XrayConfigBuilder {
     const val PROXY_TAG = "proxy"
+    const val CHAIN_HOP_TAG = "chain-hop-1"
     const val DIRECT_TAG = "direct"
     const val BLOCK_TAG = "block"
     const val SOCKS_TAG = "socks"
+    const val HTTP_TAG = "http-in"
     const val TUN_TAG = "tun"
 
-    /** The loopback SOCKS port the UI reaches the running core on. */
     const val LOCAL_SOCKS_PORT = 10808
-
-    /** The default URL real delay measurements fetch through the tested outbound. */
+    const val LOCAL_HTTP_PORT = 10809
     const val DEFAULT_TEST_URL = "https://www.gstatic.com/generate_204"
 
     private const val TUN_NAME = "chumpy0"
-    private const val TUN_MTU = 1500
     private const val USER_LEVEL = 8
-
-    /** The tag of the balancer over the members, when the session runs one. */
     private const val BALANCER_TAG = "balancer"
-
-    /** How often the observatory re-probes a balancer's members. */
     private const val OBSERVATORY_PROBE_INTERVAL = "1m"
-
-    /**
-     * The strategies the core's balancer switch knows; the two observing ones need the
-     * root-level observatory, which the builder emits with them.
-     */
     private val OBSERVING_STRATEGIES = setOf("leastping", "leastload")
-
-    /** The parser for the panel's carried routing rules; malformed ones are skipped. */
     private val lenientJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    /**
-     * The document the VPN service hands to startLoop alongside the TUN descriptor.
-     *
-     * A BALANCER profile carries no endpoint of its own: its [members] — the resolved
-     * member rows — ride along instead, each its own tagged outbound, with the balancer
-     * over them and the routing's fall-through aimed at it. The first member keeps the
-     * plain proxy tag: it is the default outbound a dead balancer falls back to, and the
-     * tag the stats have always counted.
-     */
     fun buildFull(
         profile: ProfileEntity,
         mode: RoutingMode,
@@ -93,46 +59,395 @@ object XrayConfigBuilder {
         fragmentInterval: String = "10-20",
         muxEnabled: Boolean = false,
         muxConcurrency: Int = 8,
+        chainParent: ProfileEntity? = null,
+        ipv6Enabled: Boolean = false,
+        tunMtu: Int = 1500,
+        proxyOnlyMode: Boolean = false,
+        lanSharingEnabled: Boolean = false,
+        socksPort: Int = LOCAL_SOCKS_PORT,
+        httpPort: Int = LOCAL_HTTP_PORT,
+        socksUsername: String = "",
+        socksPassword: String = "",
+        fakednsEnabled: Boolean = false,
+        localDnsEnabled: Boolean = false,
+        domainStrategy: String = "AsIs",
+        remoteDns: String = "1.1.1.1",
+        domesticDns: String = "223.5.5.5",
+        fragmentPackets: String = "tlshello",
+        fragmentMaxSplit: String = "",
+        muxXudpConcurrency: Int = 8,
+        muxXudpQuic: String = "reject",
+        customRules: List<CustomRoutingRule> = emptyList(),
     ): String {
+        if (profile.type == ProfileType.CUSTOM_JSON) {
+            buildFullCustomOverride(
+                profile = profile,
+                tunMtu = tunMtu,
+                proxyOnlyMode = proxyOnlyMode,
+                lanSharingEnabled = lanSharingEnabled,
+                socksPort = socksPort,
+                httpPort = httpPort,
+                socksUsername = socksUsername,
+                socksPassword = socksPassword,
+                fakednsEnabled = fakednsEnabled,
+            )?.let { return it }
+        }
+
         require(profile.type != ProfileType.BALANCER || members.isNotEmpty()) { "Balancer has no usable servers" }
         val balancerMembers = if (profile.type == ProfileType.BALANCER) members else emptyList()
         val strategy = profile.balancerStrategy.ifEmpty { "random" }
+        val listenAddr = if (lanSharingEnabled) "0.0.0.0" else "127.0.0.1"
+        val effectiveChainParent = chainParent?.takeIf {
+            it.id != profile.id && it.type != ProfileType.BALANCER
+        }
+
         return buildJsonObject {
             put("stats", buildJsonObject {})
             put("log", buildJsonObject { put("loglevel", "warning") })
-        put(
-            "policy",
-            buildJsonObject {
-                put(
-                    "levels",
-                    buildJsonObject {
-                        put(
-                            "8",
+            put(
+                "policy",
+                buildJsonObject {
+                    put(
+                        "levels",
+                        buildJsonObject {
+                            put(
+                                "8",
+                                buildJsonObject {
+                                    put("handshake", 4)
+                                    put("connIdle", 300)
+                                    put("uplinkOnly", 1)
+                                    put("downlinkOnly", 1)
+                                },
+                            )
+                        },
+                    )
+                    put(
+                        "system",
+                        buildJsonObject {
+                            put("statsOutboundUplink", true)
+                            put("statsOutboundDownlink", true)
+                        },
+                    )
+                },
+            )
+            put(
+                "inbounds",
+                buildInboundsArray(
+                    listenAddr = listenAddr,
+                    socksPort = socksPort,
+                    httpPort = httpPort,
+                    socksUsername = socksUsername,
+                    socksPassword = socksPassword,
+                    tunMtu = tunMtu,
+                    proxyOnlyMode = proxyOnlyMode,
+                    fakednsEnabled = fakednsEnabled,
+                    includeHttp = lanSharingEnabled || httpPort != LOCAL_HTTP_PORT || proxyOnlyMode,
+                ),
+            )
+            put(
+                "outbounds",
+                buildJsonArray {
+                    val fragTag = if (fragmentEnabled) "fragment" else null
+                    val proxyDialer = when {
+                        effectiveChainParent != null -> CHAIN_HOP_TAG
+                        else -> fragTag
+                    }
+                    if (balancerMembers.isEmpty()) {
+                        add(
+                            OutboundBuilder.build(
+                                profile = profile,
+                                tag = PROXY_TAG,
+                                muxEnabled = muxEnabled,
+                                muxConcurrency = muxConcurrency,
+                                dialerProxy = proxyDialer,
+                                muxXudpConcurrency = muxXudpConcurrency,
+                                muxXudpQuic = muxXudpQuic,
+                            ),
+                        )
+                    } else {
+                        balancerMembers.forEachIndexed { index, member ->
+                            add(
+                                OutboundBuilder.build(
+                                    profile = member,
+                                    tag = memberTag(index),
+                                    muxEnabled = muxEnabled,
+                                    muxConcurrency = muxConcurrency,
+                                    dialerProxy = proxyDialer,
+                                    muxXudpConcurrency = muxXudpConcurrency,
+                                    muxXudpQuic = muxXudpQuic,
+                                ),
+                            )
+                        }
+                    }
+                    if (effectiveChainParent != null) {
+                        add(
+                            OutboundBuilder.build(
+                                profile = effectiveChainParent,
+                                tag = CHAIN_HOP_TAG,
+                                muxEnabled = false,
+                                dialerProxy = fragTag,
+                            ),
+                        )
+                    }
+                    if (fragmentEnabled) {
+                        add(
                             buildJsonObject {
-                                put("handshake", 4)
-                                put("connIdle", 300)
-                                put("uplinkOnly", 1)
-                                put("downlinkOnly", 1)
+                                put("tag", "fragment")
+                                put("protocol", "freedom")
+                                put(
+                                    "settings",
+                                    buildJsonObject {
+                                        put(
+                                            "fragment",
+                                            buildJsonObject {
+                                                put("packets", fragmentPackets.ifBlank { "tlshello" })
+                                                put("length", fragmentLength.ifBlank { "100-200" })
+                                                put("interval", fragmentInterval.ifBlank { "10-20" })
+                                                if (fragmentMaxSplit.isNotBlank()) {
+                                                    put("maxSplit", fragmentMaxSplit.trim())
+                                                }
+                                            },
+                                        )
+                                    },
+                                )
+                            },
+                        )
+                    }
+                    add(
+                        buildJsonObject {
+                            put("tag", DIRECT_TAG)
+                            put("protocol", "freedom")
+                            put("settings", buildJsonObject { put("domainStrategy", if (ipv6Enabled) "UseIP" else "UseIPv4") })
+                        },
+                    )
+                    add(
+                        buildJsonObject {
+                            put("tag", BLOCK_TAG)
+                            put("protocol", "blackhole")
+                            put("settings", buildJsonObject { put("response", buildJsonObject { put("type", "http") }) })
+                        },
+                    )
+                },
+            )
+            put(
+                "routing",
+                routing(
+                    mode = mode,
+                    balanced = balancerMembers.isNotEmpty(),
+                    strategy = strategy,
+                    profileRules = if (mode == RoutingMode.GLOBAL) profile.routingRules else "",
+                    geodataSources = profile.geodataSources,
+                    bypassDomestic = bypassDomestic,
+                    blockAds = blockAds,
+                    domainStrategy = domainStrategy,
+                    customRules = customRules,
+                ),
+            )
+            if (strategy in OBSERVING_STRATEGIES && balancerMembers.isNotEmpty()) {
+                put(
+                    "observatory",
+                    buildJsonObject {
+                        put("subjectSelector", buildJsonArray { add(JsonPrimitive(PROXY_TAG)) })
+                        put("probeURL", testUrl)
+                        put("probeInterval", OBSERVATORY_PROBE_INTERVAL)
+                        put("enableConcurrency", true)
+                    },
+                )
+            }
+            if (fakednsEnabled) {
+                put(
+                    "fakedns",
+                    buildJsonArray {
+                        add(
+                            buildJsonObject {
+                                put("ipPool", "198.18.0.0/15")
+                                put("poolSize", 65535)
                             },
                         )
                     },
                 )
+            }
+            put(
+                "dns",
+                buildJsonObject {
+                    put("hosts", buildJsonObject {})
+                    put(
+                        "servers",
+                        buildJsonArray {
+                            if (fakednsEnabled) add(JsonPrimitive("fakedns"))
+                            add(JsonPrimitive(if (localDnsEnabled) "localhost" else "localhost"))
+                            val primaryDns = resolvePrimaryDns(dnsProvider, remoteDns)
+                            add(JsonPrimitive(primaryDns))
+                            val fallbackDns = if (domesticDns.isNotBlank() && domesticDns != primaryDns) {
+                                domesticDns.trim()
+                            } else if (primaryDns == "8.8.8.8") {
+                                "1.1.1.1"
+                            } else {
+                                "8.8.8.8"
+                            }
+                            add(JsonPrimitive(fallbackDns))
+                        },
+                    )
+                },
+            )
+        }.toString()
+    }
+
+    /**
+     * When the profile is a full Xray JSON document (`CUSTOM_JSON` with an `"outbounds"` array),
+     * merge our required local inbounds, stats, and policy cleanly so live monitoring works.
+     */
+    private fun buildFullCustomOverride(
+        profile: ProfileEntity,
+        tunMtu: Int,
+        proxyOnlyMode: Boolean,
+        lanSharingEnabled: Boolean,
+        socksPort: Int,
+        httpPort: Int,
+        socksUsername: String,
+        socksPassword: String,
+        fakednsEnabled: Boolean,
+    ): String? {
+        val parsed = runCatching { lenientJson.parseToJsonElement(profile.rawConfigJson).jsonObject }.getOrNull()
+            ?: return null
+        if (parsed["outbounds"] !is JsonArray) return null
+        val map = parsed.toMutableMap()
+        if ("stats" !in map) map["stats"] = buildJsonObject {}
+        val listenAddr = if (lanSharingEnabled) "0.0.0.0" else "127.0.0.1"
+        map["inbounds"] = buildInboundsArray(
+            listenAddr = listenAddr,
+            socksPort = socksPort,
+            httpPort = httpPort,
+            socksUsername = socksUsername,
+            socksPassword = socksPassword,
+            tunMtu = tunMtu,
+            proxyOnlyMode = proxyOnlyMode,
+            fakednsEnabled = fakednsEnabled,
+            includeHttp = true,
+        )
+        return JsonObject(map).toString()
+    }
+
+    private fun buildInboundsArray(
+        listenAddr: String,
+        socksPort: Int,
+        httpPort: Int,
+        socksUsername: String,
+        socksPassword: String,
+        tunMtu: Int,
+        proxyOnlyMode: Boolean,
+        fakednsEnabled: Boolean,
+        includeHttp: Boolean,
+    ): JsonArray = buildJsonArray {
+        add(
+            buildJsonObject {
+                put("tag", SOCKS_TAG)
+                put("port", socksPort.coerceIn(1024, 65535))
+                put("listen", listenAddr)
+                put("protocol", "socks")
                 put(
-                    "system",
+                    "settings",
                     buildJsonObject {
-                        put("statsOutboundUplink", true)
-                        put("statsOutboundDownlink", true)
+                        if (socksUsername.isNotEmpty() || socksPassword.isNotEmpty()) {
+                            put("auth", "password")
+                            put(
+                                "accounts",
+                                buildJsonArray {
+                                    add(
+                                        buildJsonObject {
+                                            put("user", socksUsername)
+                                            put("pass", socksPassword)
+                                        },
+                                    )
+                                },
+                            )
+                        } else {
+                            put("auth", "noauth")
+                        }
+                        put("udp", true)
+                        put("userLevel", USER_LEVEL)
                     },
                 )
+                sniffing(fakednsEnabled)
             },
         )
+        if (includeHttp) {
+            add(
+                buildJsonObject {
+                    put("tag", HTTP_TAG)
+                    put("port", httpPort.coerceIn(1024, 65535))
+                    put("listen", listenAddr)
+                    put("protocol", "http")
+                    put(
+                        "settings",
+                        buildJsonObject {
+                            if (socksUsername.isNotEmpty() || socksPassword.isNotEmpty()) {
+                                put(
+                                    "accounts",
+                                    buildJsonArray {
+                                        add(
+                                            buildJsonObject {
+                                                put("user", socksUsername)
+                                                put("pass", socksPassword)
+                                            },
+                                        )
+                                    },
+                                )
+                            }
+                            put("userLevel", USER_LEVEL)
+                        },
+                    )
+                    sniffing(fakednsEnabled)
+                },
+            )
+        }
+        if (!proxyOnlyMode) {
+            add(
+                buildJsonObject {
+                    put("tag", TUN_TAG)
+                    put("protocol", "tun")
+                    put(
+                        "settings",
+                        buildJsonObject {
+                            put("name", TUN_NAME)
+                            put("mtu", tunMtu.coerceIn(1280, 9000))
+                            put("userLevel", USER_LEVEL)
+                        },
+                    )
+                    sniffing(fakednsEnabled)
+                },
+            )
+        }
+    }
+
+    /**
+     * Bare document for delay measurement (no inbounds).
+     */
+    fun buildTest(profile: ProfileEntity): String = buildJsonObject {
+        put("log", buildJsonObject { put("loglevel", "warning") })
+        put("inbounds", buildJsonArray {})
+        put("outbounds", buildJsonArray { add(OutboundBuilder.build(profile, PROXY_TAG)) })
+        put(
+            "routing",
+            buildJsonObject {
+                put("domainStrategy", "AsIs")
+                put("rules", buildJsonArray {})
+            },
+        )
+    }.toString()
+
+    /**
+     * Standalone loopback SOCKS document for single-stream download throughput probes.
+     */
+    fun buildThroughputTest(profile: ProfileEntity, socksPort: Int): String = buildJsonObject {
+        put("log", buildJsonObject { put("loglevel", "warning") })
         put(
             "inbounds",
             buildJsonArray {
                 add(
                     buildJsonObject {
                         put("tag", SOCKS_TAG)
-                        put("port", LOCAL_SOCKS_PORT)
+                        put("port", socksPort)
                         put("listen", "127.0.0.1")
                         put("protocol", "socks")
                         put(
@@ -143,22 +458,6 @@ object XrayConfigBuilder {
                                 put("userLevel", USER_LEVEL)
                             },
                         )
-                        sniffing()
-                    },
-                )
-                add(
-                    buildJsonObject {
-                        put("tag", TUN_TAG)
-                        put("protocol", "tun")
-                        put(
-                            "settings",
-                            buildJsonObject {
-                                put("name", TUN_NAME)
-                                put("mtu", TUN_MTU)
-                                put("userLevel", USER_LEVEL)
-                            },
-                        )
-                        sniffing()
                     },
                 )
             },
@@ -166,118 +465,14 @@ object XrayConfigBuilder {
         put(
             "outbounds",
             buildJsonArray {
-                val dialerProxy = if (fragmentEnabled) "fragment" else null
-                if (balancerMembers.isEmpty()) {
-                    add(OutboundBuilder.build(profile, PROXY_TAG, muxEnabled, muxConcurrency, dialerProxy))
-                } else {
-                    balancerMembers.forEachIndexed { index, member ->
-                        add(OutboundBuilder.build(member, memberTag(index), muxEnabled, muxConcurrency, dialerProxy))
-                    }
-                }
-                if (fragmentEnabled) {
-                    add(
-                        buildJsonObject {
-                            put("tag", "fragment")
-                            put("protocol", "freedom")
-                            put(
-                                "settings",
-                                buildJsonObject {
-                                    put(
-                                        "fragment",
-                                        buildJsonObject {
-                                            put("packets", "tlshello")
-                                            put("length", fragmentLength.ifBlank { "100-200" })
-                                            put("interval", fragmentInterval.ifBlank { "10-20" })
-                                        },
-                                    )
-                                },
-                            )
-                        },
-                    )
-                }
+                add(OutboundBuilder.build(profile, PROXY_TAG))
                 add(
                     buildJsonObject {
                         put("tag", DIRECT_TAG)
                         put("protocol", "freedom")
-                        put("settings", buildJsonObject { put("domainStrategy", "UseIP") })
-                    },
-                )
-                add(
-                    buildJsonObject {
-                        put("tag", BLOCK_TAG)
-                        put("protocol", "blackhole")
-                        put("settings", buildJsonObject { put("response", buildJsonObject { put("type", "http") }) })
                     },
                 )
             },
-        )
-        put(
-            "routing",
-            routing(
-                mode,
-                balanced = balancerMembers.isNotEmpty(),
-                strategy = strategy,
-                profileRules = if (mode == RoutingMode.GLOBAL) profile.routingRules else "",
-                geodataSources = profile.geodataSources,
-                bypassDomestic = bypassDomestic,
-                blockAds = blockAds,
-            )
-        )
-        if (strategy in OBSERVING_STRATEGIES && balancerMembers.isNotEmpty()) {
-            // The observing strategies need a probe source: one root-level observatory
-            // over the members, probing the delay-test URL the user's own settings
-            // carry, on the clock of OBSERVATORY_PROBE_INTERVAL.
-            put(
-                "observatory",
-                buildJsonObject {
-                    put("subjectSelector", buildJsonArray { add(JsonPrimitive(PROXY_TAG)) })
-                    put("probeURL", testUrl)
-                    put("probeInterval", OBSERVATORY_PROBE_INTERVAL)
-                    put("enableConcurrency", true)
-                },
-            )
-        }
-        put(
-            "dns",
-            buildJsonObject {
-                put("hosts", buildJsonObject {})
-                put(
-                    "servers",
-                    buildJsonArray {
-                        // The first server is the one the wireguard outbound asks for its
-                        // peer endpoint — and the only resolver that knows private-zone
-                        // names (the system's). It must be "localhost": "local" is not a
-                        // special address to the core, the endpoint lookup then answers
-                        // "record not found", and the handshake never starts — a tunnel
-                        // that is up while every packet dies. The public servers behind
-                        // it catch what the system cannot resolve at all.
-                        add(JsonPrimitive("localhost"))
-                        val primaryDns = when {
-                            dnsProvider == null -> "1.1.1.1"
-                            dnsProvider.contains("9.9.9.9") -> "9.9.9.9"
-                            dnsProvider.contains("8.8.8.8") -> "8.8.8.8"
-                            dnsProvider.contains("AdGuard", ignoreCase = true) || dnsProvider.contains("94.140") -> "94.140.14.14"
-                            else -> "1.1.1.1"
-                        }
-                        add(JsonPrimitive(primaryDns))
-                        add(JsonPrimitive(if (primaryDns == "8.8.8.8") "1.1.1.1" else "8.8.8.8"))
-                    },
-                )
-            },
-        )
-        }.toString()
-    }
-
-    /**
-     * The bare document for [slop.miho.chumpy.core.XrayCore.measureOutboundDelay]: one
-     * outbound, no inbounds — the measurement core dials the test URL through it.
-     */
-    fun buildTest(profile: ProfileEntity): String = buildJsonObject {
-        put("log", buildJsonObject { put("loglevel", "warning") })
-        put("inbounds", buildJsonArray {})
-        put(
-            "outbounds",
-            buildJsonArray { add(OutboundBuilder.build(profile, PROXY_TAG)) },
         )
         put(
             "routing",
@@ -288,7 +483,20 @@ object XrayConfigBuilder {
         )
     }.toString()
 
-    private fun kotlinx.serialization.json.JsonObjectBuilder.sniffing() {
+    private fun resolvePrimaryDns(dnsProvider: String?, remoteDns: String): String {
+        if (!dnsProvider.isNullOrBlank()) {
+            when {
+                dnsProvider.contains("9.9.9.9") -> return "9.9.9.9"
+                dnsProvider.contains("8.8.8.8") -> return "8.8.8.8"
+                dnsProvider.contains("AdGuard", ignoreCase = true) || dnsProvider.contains("94.140") -> return "94.140.14.14"
+                dnsProvider.equals("Custom", ignoreCase = true) && remoteDns.isNotBlank() -> return remoteDns.trim()
+                dnsProvider.contains("1.1.1.1") -> return if (remoteDns.isNotBlank() && remoteDns != "1.1.1.1") remoteDns.trim() else "1.1.1.1"
+            }
+        }
+        return remoteDns.trim().ifBlank { "1.1.1.1" }
+    }
+
+    private fun kotlinx.serialization.json.JsonObjectBuilder.sniffing(fakednsEnabled: Boolean = false) {
         put(
             "sniffing",
             buildJsonObject {
@@ -299,6 +507,7 @@ object XrayConfigBuilder {
                         add(JsonPrimitive("http"))
                         add(JsonPrimitive("tls"))
                         add(JsonPrimitive("quic"))
+                        if (fakednsEnabled) add(JsonPrimitive("fakedns"))
                     },
                 )
             },
@@ -313,8 +522,10 @@ object XrayConfigBuilder {
         geodataSources: String,
         bypassDomestic: Boolean = false,
         blockAds: Boolean = false,
+        domainStrategy: String = "AsIs",
+        customRules: List<CustomRoutingRule> = emptyList(),
     ) = buildJsonObject {
-        put("domainStrategy", "AsIs")
+        put("domainStrategy", domainStrategy.ifBlank { "AsIs" })
         if (balanced) {
             put(
                 "balancers",
@@ -322,8 +533,6 @@ object XrayConfigBuilder {
                     add(
                         buildJsonObject {
                             put("tag", BALANCER_TAG)
-                            // Every member tag carries the proxy prefix — the first is
-                            // the plain tag itself — so the one selector covers them all.
                             put("selector", buildJsonArray { add(JsonPrimitive(PROXY_TAG)) })
                             put("strategy", buildJsonObject { put("type", strategy) })
                         },
@@ -334,16 +543,37 @@ object XrayConfigBuilder {
         put(
             "rules",
             buildJsonArray {
+                // User-defined custom rules take highest priority
+                customRules.filter { it.enabled && it.pattern.isNotBlank() }.forEach { userRule ->
+                    val target = when (userRule.action) {
+                        RoutingRuleAction.DIRECT -> DIRECT_TAG
+                        RoutingRuleAction.BLOCK -> BLOCK_TAG
+                        RoutingRuleAction.PROXY -> PROXY_TAG
+                    }
+                    val tokens = userRule.pattern.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                    if (tokens.isNotEmpty()) {
+                        rule {
+                            when (userRule.matchType) {
+                                RoutingRuleMatchType.DOMAIN -> put("domain", JsonArray(tokens.map(::JsonPrimitive)))
+                                RoutingRuleMatchType.IP -> put("ip", JsonArray(tokens.map(::JsonPrimitive)))
+                                RoutingRuleMatchType.PORT -> put("port", tokens.joinToString(","))
+                                RoutingRuleMatchType.PROTOCOL -> put("protocol", JsonArray(tokens.map(::JsonPrimitive)))
+                            }
+                            if (userRule.action == RoutingRuleAction.PROXY && balanced) {
+                                put("balancerTag", BALANCER_TAG)
+                            } else {
+                                put("outboundTag", target)
+                            }
+                        }
+                    }
+                }
                 mode.region?.let { region ->
-                    // Sniffed BitTorrent goes direct in bypass mode, as in v2rayNG's presets.
                     rule {
                         put("protocol", buildJsonArray { add(JsonPrimitive("bittorrent")) })
                         put("outboundTag", DIRECT_TAG)
                     }
                     rule {
                         put("domain", buildJsonArray {
-                            // The geosite lists exist for the big three (v2rayNG's own
-                            // presets use these codes); the rest ride the country's TLD.
                             when (region) {
                                 "ru" -> "geosite:category-ru"
                                 "ir" -> "geosite:category-ir"
@@ -359,7 +589,6 @@ object XrayConfigBuilder {
                         put("outboundTag", DIRECT_TAG)
                     }
                 }
-                // QUIC would tunnel UDP 443; blocking it keeps traffic on sniffable TCP.
                 rule {
                     put("port", "443")
                     put("network", "udp")
@@ -385,21 +614,13 @@ object XrayConfigBuilder {
                         put("outboundTag", BLOCK_TAG)
                     }
                 }
-                // The panel's own rules, next to ours: bypass lists, ad and QUIC blocks,
-                // torrent direct — the routing the config the profile came from carried,
-                // the balancer's whole point in the panel's terms. Targets rewritten onto
-                // this session's tags; the fall-through stays ours.
                 panelRules(profileRules, balanced).forEach { add(slop.miho.chumpy.sub.GeodataSources.rewrite(it, geodataSources)) }
                 if (balanced) {
-                    // The catch-all rides the balancer: whatever the bypass rules let
-                    // through, the core picks the member for — at random, by ping or by
-                    // load, as the panel asked.
                     rule {
                         put("network", "tcp,udp")
                         put("balancerTag", BALANCER_TAG)
                     }
                 }
-                // Whatever matched nothing rides the first outbound: the proxy.
             },
         )
     }
@@ -415,14 +636,6 @@ object XrayConfigBuilder {
         )
     }
 
-    /**
-     * The panel's routing rules rewritten onto this session's tags, BetterExclave's
-     * rewriteProfileRouteTarget: direct-ish targets go to the session's freedom, block-ish
-     * to its blackhole, and everything the panel aimed at a proxy or balancer tag funnels
-     * to the one outbound that exists here — the balancer when the session runs one, the
-     * proxy otherwise. A rule that carries none of these (a tag the panel invented) lands
-     * on the same funnel rather than pointing at nothing.
-     */
     private fun panelRules(profileRules: String, balanced: Boolean): List<JsonObject> {
         if (profileRules.isBlank()) return emptyList()
         val rules = try {
@@ -452,10 +665,5 @@ object XrayConfigBuilder {
     private fun JsonObject.string(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull
 
-    /**
-     * The member tags: the first member is the plain proxy tag — the default outbound a
-     * dead balancer falls back to — and the rest ride the proxy prefix, so the one
-     * balancer selector covers them all.
-     */
     private fun memberTag(index: Int): String = if (index == 0) PROXY_TAG else "$PROXY_TAG-${index + 1}"
 }
