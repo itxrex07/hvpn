@@ -146,15 +146,6 @@
             </intent-filter>
         </activity-alias>
 
-        <!--
-            The wallpaper picker, a one-off deep dive from the interface settings rather
-            than a navbar destination: two pages (preview, settings) under one bar. Back
-            (gesture or button) simply finishes it.
-        -->
-        <activity
-            android:name=".ui.wallpapers.WallpaperActivity"
-            android:exported="false"
-            android:parentActivityName=".MainActivity" />
         <activity
             android:name=".ui.perapp.PerAppProxyActivity"
             android:exported="false"

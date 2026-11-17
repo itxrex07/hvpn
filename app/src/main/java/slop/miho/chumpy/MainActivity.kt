@@ -28,8 +28,6 @@ import slop.miho.chumpy.ui.MainViewModel
 import slop.miho.chumpy.ui.components.SystemBarsIconsDark
 import slop.miho.chumpy.ui.main.MainShell
 import slop.miho.chumpy.ui.theme.ChumpyTheme
-import slop.miho.chumpy.ui.theme.LocalDarkTheme
-import slop.miho.chumpy.ui.welcome.WelcomeScreen
 
 class MainActivity : ControllerActivity() {
     companion object {

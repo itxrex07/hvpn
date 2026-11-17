@@ -27,11 +27,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
@@ -51,26 +48,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import slop.miho.chumpy.R
 import slop.miho.chumpy.sub.PhoneImportServer
-
-@Composable
-fun PhoneImportAction(initialFocus: Boolean = false, wallpaper: Boolean = false, onImport: (String, (String?) -> Unit) -> Unit) {
-    val television = LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK ==
-        android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
-    if (!television || !slop.miho.chumpy.ui.wallpapers.LocalPageOnStage.current) return
-    var open by remember { mutableStateOf(false) }
-    val requester = remember { FocusRequester() }
-    LaunchedEffect(initialFocus, television) {
-        if (initialFocus && television) {
-            androidx.compose.runtime.withFrameNanos { }
-            requester.requestFocus()
-        }
-    }
-    TextButton(onClick = { open = true }, modifier = Modifier.focusRequester(requester)
-        .focusRing(circular = true, inset = true, gap = 1.dp)) {
-        Text(stringResource(if (wallpaper) R.string.phone_wallpaper_action else R.string.phone_import_action))
-    }
-    if (open) PhoneImportDialog(onDismiss = { open = false }, wallpaper = wallpaper, onImport = onImport)
-}
 
 @Composable
 fun PhoneImportDialog(onDismiss: () -> Unit, wallpaper: Boolean = false, onImport: (String, (String?) -> Unit) -> Unit) {
@@ -138,8 +115,7 @@ fun PhoneImportDialog(onDismiss: () -> Unit, wallpaper: Boolean = false, onImpor
     }
     val wide = with(density) { windowSize.width.toDp() } >= 700.dp
     AlertDialog(
-        modifier = Modifier.then(if (wide) Modifier.width(760.dp) else Modifier)
-            .controllerWindowInput { if (!importing) onDismiss() },
+        modifier = if (wide) Modifier.width(760.dp) else Modifier,
         properties = DialogProperties(usePlatformDefaultWidth = !wide),
         onDismissRequest = { if (!importing) onDismiss() },
         title = { Text(stringResource(if (wallpaper) R.string.phone_wallpaper_action else R.string.phone_import_action)) },

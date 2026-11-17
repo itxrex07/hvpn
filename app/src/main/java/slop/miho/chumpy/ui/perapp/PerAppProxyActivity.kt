@@ -22,19 +22,25 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -44,8 +50,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -64,7 +68,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
@@ -85,24 +88,12 @@ import slop.miho.chumpy.ui.components.WavyPullToRefreshBox
 import slop.miho.chumpy.ui.components.pressBounce
 import slop.miho.chumpy.ui.components.pullShiftedPadding
 import slop.miho.chumpy.ui.components.rememberHapticPoke
-import slop.miho.chumpy.ui.main.FloatingBottomBarReservedHeight
-import slop.miho.chumpy.ui.main.PillDestination
-import slop.miho.chumpy.ui.main.SubScreenBottomBar
-import slop.miho.chumpy.ui.main.recordBehindBar
-import slop.miho.chumpy.ui.main.rememberContentUnderBar
-import slop.miho.chumpy.ui.main.screenPadding
 import slop.miho.chumpy.ui.theme.ChumpyTheme
 import slop.miho.chumpy.ui.theme.LocalDarkTheme
-import slop.miho.chumpy.ui.wallpapers.LocalBarCoverage
-import slop.miho.chumpy.ui.wallpapers.LocalBarUnderlay
-import slop.miho.chumpy.ui.wallpapers.LocalSurfaceOpacity
-import slop.miho.chumpy.ui.wallpapers.ReportBarCoverage
 
 /**
- * The per-app proxy, a one-page deep-dive screen in the wallpapers' footsteps: the
- * bypass list — picked apps ignore the tunnel and connect directly (v2rayNG's
- * arrangement). The system back gesture and the bar's back button both simply finish
- * this activity.
+ * The per-app proxy bypass list — picked apps ignore the tunnel and connect directly.
+ * The system back gesture and the bottom bar's back button both finish this activity.
  */
 class PerAppProxyActivity : ControllerActivity() {
 
@@ -113,12 +104,9 @@ class PerAppProxyActivity : ControllerActivity() {
             val ui by SettingsStore.settings(this).collectAsStateWithLifecycle()
             val connection by ConnectionStore.settings(this).collectAsStateWithLifecycle()
             ChumpyTheme(settings = ui) {
-                // The window's own bars answer to the theme, as in the main shell — there
-                // is no wallpaper here for them to hang on instead.
                 SystemBarsIconsDark(dark = LocalDarkTheme.current)
                 Surface(color = MaterialTheme.colorScheme.surface) {
                     PerAppProxyScreen(
-                        frost = ui.navigationBarBlur,
                         appsEnabled = connection.perAppEnabled,
                         bypassedApps = connection.bypassedApps,
                         onToggleAppsEnabled = { enabled ->
@@ -143,10 +131,7 @@ class PerAppProxyActivity : ControllerActivity() {
     }
 }
 
-/** The bar's one destination, the apps page. */
-private enum class PerAppPage(override val icon: Int, override val label: Int) : PillDestination {
-    APPS(R.drawable.ic_apps, R.string.per_app_title),
-}
+private val PerAppBarReservedHeight = 88.dp
 
 /** One launchable app, icon included, loaded off the main thread. */
 private data class AppEntry(
@@ -157,7 +142,6 @@ private data class AppEntry(
 
 @Composable
 private fun PerAppProxyScreen(
-    frost: Boolean,
     appsEnabled: Boolean,
     bypassedApps: Set<String>,
     onToggleAppsEnabled: (Boolean) -> Unit,
@@ -166,74 +150,104 @@ private fun PerAppProxyScreen(
     modifier: Modifier = Modifier,
 ) {
     val surface = MaterialTheme.colorScheme.surface
-    // The bar's glass, the shell's own law in this window too: the pages report whether
-    // their rows sit under the bar — it steps a tone up over them — and while the frost
-    // setting is on everything the bar floats over is recorded, so its pills re-draw the
-    // slice behind themselves, blurred, as their glass.
-    val barCoverage = remember { mutableStateOf(false) }
-    val barUnderlay = remember { mutableStateOf(false) }
-    val behindBar = rememberGraphicsLayer()
     Box(modifier = modifier.fillMaxSize()) {
+        AppsPage(
+            enabled = appsEnabled,
+            bypassed = bypassedApps,
+            onToggleEnabled = onToggleAppsEnabled,
+            onToggle = onToggleApp,
+        )
+
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .recordBehindBar(behindBar, frost),
-        ) {
-            CompositionLocalProvider(
-                LocalBarCoverage provides barCoverage,
-                LocalBarUnderlay provides barUnderlay,
-            ) {
-                AppsPage(
-                    enabled = appsEnabled,
-                    bypassed = bypassedApps,
-                    onToggleEnabled = onToggleAppsEnabled,
-                    onToggle = onToggleApp,
-                )
-            }
-
-            // Content scrolls under the status bar and fades out behind this gradient, the
-            // shell's own page fade.
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .height(WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp)
-                    .drawBehind {
-                        drawRect(
-                            Brush.verticalGradient(
-                                listOf(surface.copy(alpha = 0.97f), surface.copy(alpha = 0f)),
-                            ),
-                        )
-                    },
-            )
-
-            // Content scrolls under the floating bar and fades out behind it.
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(
-                        WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() +
-                            FloatingBottomBarReservedHeight + 8.dp,
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .height(WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp)
+                .drawBehind {
+                    drawRect(
+                        Brush.verticalGradient(
+                            listOf(surface.copy(alpha = 0.97f), surface.copy(alpha = 0f)),
+                        ),
                     )
-                    .drawBehind {
-                        drawRect(
-                            Brush.verticalGradient(
-                                listOf(surface.copy(alpha = 0f), surface.copy(alpha = 0.97f)),
-                            ),
-                        )
-                    },
-            )
-        }
+                },
+        )
 
-        SubScreenBottomBar(
-            items = PerAppPage.entries.toList(),
-            selected = PerAppPage.APPS,
-            onSelect = { },
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(
+                    WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() +
+                        PerAppBarReservedHeight + 8.dp,
+                )
+                .drawBehind {
+                    drawRect(
+                        Brush.verticalGradient(
+                            listOf(surface.copy(alpha = 0f), surface.copy(alpha = 0.97f)),
+                        ),
+                    )
+                },
+        )
+
+        PerAppBottomBar(
             onBack = onBack,
-            backdrop = behindBar,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
+    }
+}
+
+@Composable
+private fun PerAppBottomBar(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier = modifier
+            .padding(WindowInsets.navigationBars.asPaddingValues())
+            .padding(bottom = 16.dp, start = 16.dp, end = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            onClick = onBack,
+            shape = CircleShape,
+            color = colors.surfaceContainerHigh,
+            contentColor = colors.onSurface,
+            tonalElevation = 2.dp,
+            modifier = Modifier.size(56.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_arrow_back),
+                    contentDescription = stringResource(R.string.nav_back),
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
+        Surface(
+            shape = RoundedCornerShape(999.dp),
+            color = colors.primaryContainer,
+            contentColor = colors.onPrimaryContainer,
+            tonalElevation = 2.dp,
+            modifier = Modifier.height(56.dp),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_apps),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.per_app_title),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        }
     }
 }
 
@@ -269,14 +283,7 @@ private fun AppsPage(
     val outer = MaterialTheme.shapes.extraLarge
     val inner = MaterialTheme.shapes.extraSmall
 
-    // The page's report into the screen's bar: covered once the list has anywhere to
-    // travel, properly under it once the last rows reach past the bar's rim.
     val listState = rememberLazyListState()
-    val covered by remember(listState) {
-        derivedStateOf { listState.canScrollForward || listState.canScrollBackward }
-    }
-    val underlaid by rememberContentUnderBar(listState)
-    ReportBarCoverage(covered, underlaid = underlaid)
 
     // The wave grows with the pull while the list re-queries; the first load rides
     // the same wave, so the wait is never a blank page.
@@ -353,12 +360,13 @@ private fun PagedList(
     // the rows down through the top padding (see WavyPullToRefreshBox).
     val topContentPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 24.dp
     val bottomContentPadding = WindowInsets.navigationBars.asPaddingValues()
-        .calculateBottomPadding() + FloatingBottomBarReservedHeight
+        .calculateBottomPadding() + PerAppBarReservedHeight
     LazyColumn(
         state = listState,
         modifier = Modifier
             .fillMaxSize()
-            .screenPadding(),
+            .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+            .padding(horizontal = 16.dp),
         // The servers list's segmented container: 2dp gaps between rows instead of
         // dividers, each block carrying the group's outer corners on its first and last
         // rows, the small inner ones on the rest.
@@ -403,7 +411,7 @@ private fun MasterSwitchRow(
     var taps by remember { mutableIntStateOf(0) }
     Surface(
         shape = MaterialTheme.shapes.extraLarge,
-        color = colors.surfaceContainer.copy(alpha = LocalSurfaceOpacity.current),
+        color = colors.surfaceContainer,
         contentColor = colors.onSurface,
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -499,8 +507,7 @@ private fun SelectableRow(
     val motion = MaterialTheme.motionScheme
     val poke = rememberHapticPoke()
     val containerColor by animateColorAsState(
-        targetValue = (if (bypassed && active) colors.primaryContainer else colors.surfaceContainer)
-            .copy(alpha = LocalSurfaceOpacity.current),
+        targetValue = if (bypassed && active) colors.primaryContainer else colors.surfaceContainer,
         animationSpec = motion.defaultEffectsSpec(),
         label = "pickable row container",
     )

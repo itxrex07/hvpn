@@ -1,6 +1,5 @@
 package slop.miho.chumpy.ui.expressive
 
-import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -78,7 +77,6 @@ import slop.miho.chumpy.ui.StatsUiState
 import slop.miho.chumpy.ui.UpdateUiState
 import slop.miho.chumpy.ui.components.CountryFlag
 import slop.miho.chumpy.ui.components.splitLeadingFlag
-import slop.miho.chumpy.ui.wallpapers.WallpaperActivity
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STYLE A — KIRAN (Material 3 Expressive · Emerald / Mint / Peach) — HOLLOW VPN
@@ -355,10 +353,8 @@ fun KiranMainShell(
     var activeTab by rememberSaveable { mutableStateOf(KiranTab.HOME) }
 
     var showImportModal by remember { mutableStateOf(false) }
-    var showLauncherIconModal by remember { mutableStateOf(false) }
     var showDnsModal by remember { mutableStateOf(false) }
     var showFragmentModal by remember { mutableStateOf(false) }
-    var showStyleModal by remember { mutableStateOf(false) }
     var showHappSpoofModal by remember { mutableStateOf(false) }
     var showDelayTestModal by remember { mutableStateOf(false) }
     var showLogsModal by remember { mutableStateOf(false) }
@@ -407,7 +403,6 @@ fun KiranMainShell(
         ) {
             if (activeTab == KiranTab.HOME) {
                 KiranTopHeader(
-                    onOpenAppearance = { showStyleModal = true },
                     onOpenLogs = { showLogsModal = true },
                 )
             }
@@ -459,7 +454,6 @@ fun KiranMainShell(
                             home = home,
                             stats = stats,
                             settings = settings,
-                            connectionSettings = connectionSettings,
                             selectedProfile = selectedProfile,
                             updateState = updateState,
                             onToggleConnect = {
@@ -473,8 +467,6 @@ fun KiranMainShell(
                             },
                             onOpenServers = { activeTab = KiranTab.SERVERS },
                             onRefreshPing = { viewModel.refreshPing(showPending = true) },
-                            onOpenRouting = { activeTab = KiranTab.SETTINGS },
-                            onOpenDns = { showDnsModal = true },
                             onUpdateChipTap = { viewModel.onUpdateChipTap() },
                         )
 
@@ -546,11 +538,9 @@ fun KiranMainShell(
                             updateState = updateState,
                             onUpdateSettings = { transform -> viewModel.updateSettings(transform) },
                             onUpdateConnection = { transform -> viewModel.updateConnection(transform) },
-                            onOpenLauncherIconModal = { showLauncherIconModal = true },
                             onOpenDnsModal = { showDnsModal = true },
                             onOpenFragmentModal = { showFragmentModal = true },
                             onOpenPerAppProxy = onOpenPerAppProxy,
-                            onOpenStyleModal = { showStyleModal = true },
                             onOpenHappSpoofModal = { showHappSpoofModal = true },
                             onOpenDelayTestModal = { showDelayTestModal = true },
                             onOpenLogsModal = { showLogsModal = true },
@@ -586,16 +576,6 @@ fun KiranMainShell(
             )
         }
 
-        if (showLauncherIconModal) {
-            KiranLauncherIconModal(
-                currentVariant = settings.iconVariant,
-                onSelectVariant = { variant ->
-                    viewModel.updateSettings { it.copy(iconVariant = variant) }
-                },
-                onDismiss = { showLauncherIconModal = false },
-            )
-        }
-
         if (showDnsModal) {
             DnsPickerModal(
                 isStyleB = false,
@@ -613,15 +593,6 @@ fun KiranMainShell(
                 connectionSettings = connectionSettings,
                 onUpdateConnection = { transform -> viewModel.updateConnection(transform) },
                 onDismiss = { showFragmentModal = false },
-            )
-        }
-
-        if (showStyleModal) {
-            AppearanceStyleModal(
-                settings = settings,
-                onUpdateSettings = { transform -> viewModel.updateSettings(transform) },
-                onOpenLauncherShowcase = { showLauncherIconModal = true },
-                onDismiss = { showStyleModal = false },
             )
         }
 
@@ -750,7 +721,6 @@ fun KiranMainShell(
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun KiranTopHeader(
-    onOpenAppearance: () -> Unit,
     onOpenLogs: () -> Unit,
 ) {
     Row(
@@ -787,43 +757,21 @@ private fun KiranTopHeader(
             )
         }
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(KiranColors.Card)
+                .clickable(onClick = onOpenLogs)
+                .testTag("kiran_logs_button"),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(KiranColors.Card)
-                    .clickable(onClick = onOpenAppearance)
-                    .testTag("kiran_style_button"),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_appearance),
-                    contentDescription = "Appearance & Launcher",
-                    tint = KiranColors.Mint,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(KiranColors.Card)
-                    .clickable(onClick = onOpenLogs)
-                    .testTag("kiran_logs_button"),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_info),
-                    contentDescription = "Core Logs",
-                    tint = KiranColors.TextPrimary,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
+            Icon(
+                painter = painterResource(R.drawable.ic_info),
+                contentDescription = "Core Logs",
+                tint = KiranColors.TextPrimary,
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }
@@ -837,14 +785,11 @@ private fun KiranHomeTab(
     home: HomeUiState,
     stats: StatsUiState,
     settings: UiSettings,
-    connectionSettings: ConnectionSettings,
     selectedProfile: ProfileEntity?,
     updateState: UpdateUiState,
     onToggleConnect: () -> Unit,
     onOpenServers: () -> Unit,
     onRefreshPing: () -> Unit,
-    onOpenRouting: () -> Unit,
-    onOpenDns: () -> Unit,
     onUpdateChipTap: () -> Unit,
 ) {
     val isConnected = tunnelStatus.state == TunnelState.UP
@@ -1124,86 +1069,29 @@ private fun KiranHomeTab(
             }
         }
 
-        // Live Speed & Session Traffic Grid (100% real data from StatsUiState)
+        // Live Speed & Session Traffic Grid (shown only when connected)
         item {
-            val (downVal, downUnit) = formatSpeedMbps(stats.liveDownBps)
-            val (upVal, upUnit) = formatSpeedMbps(stats.liveUpBps)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                KiranMetricCard(
-                    label = "Download",
-                    value = "$downVal $downUnit",
-                    sub = "Total ↓ ${formatCompactBytes(stats.rxTotal)}",
-                    accent = KiranColors.Mint,
-                    modifier = Modifier.weight(1f),
-                )
-                KiranMetricCard(
-                    label = "Upload",
-                    value = "$upVal $upUnit",
-                    sub = "Total ↑ ${formatCompactBytes(stats.txTotal)}",
-                    accent = KiranColors.Peach,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-
-        // Quick Routing & DNS Summary Cards
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Surface(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable(onClick = onOpenRouting),
-                    shape = RoundedCornerShape(24.dp),
-                    color = KiranColors.Card,
+            AnimatedVisibility(visible = isConnected) {
+                val (downVal, downUnit) = formatSpeedMbps(stats.liveDownBps)
+                val (upVal, upUnit) = formatSpeedMbps(stats.liveUpBps)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Routing",
-                            fontFamily = OutfitFont,
-                            fontSize = 12.sp,
-                            color = KiranColors.TextMuted,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = connectionSettings.routingMode.name.replace("BYPASS_", "Bypass "),
-                            fontFamily = OutfitFont,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = KiranColors.TextPrimary,
-                        )
-                    }
-                }
-                Surface(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable(onClick = onOpenDns),
-                    shape = RoundedCornerShape(24.dp),
-                    color = KiranColors.Card,
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Resolver",
-                            fontFamily = OutfitFont,
-                            fontSize = 12.sp,
-                            color = KiranColors.TextMuted,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = connectionSettings.dnsProvider,
-                            fontFamily = OutfitFont,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = KiranColors.MintSoft,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+                    KiranMetricCard(
+                        label = "Download",
+                        value = "$downVal $downUnit",
+                        sub = "Total ↓ ${formatCompactBytes(stats.rxTotal)}",
+                        accent = KiranColors.Mint,
+                        modifier = Modifier.weight(1f),
+                    )
+                    KiranMetricCard(
+                        label = "Upload",
+                        value = "$upVal $upUnit",
+                        sub = "Total ↑ ${formatCompactBytes(stats.txTotal)}",
+                        accent = KiranColors.Peach,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
         }

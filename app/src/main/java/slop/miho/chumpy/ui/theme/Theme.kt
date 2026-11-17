@@ -37,7 +37,6 @@ import slop.miho.chumpy.data.Accent
 import slop.miho.chumpy.data.FontRegistry
 import slop.miho.chumpy.data.ThemeMode
 import slop.miho.chumpy.data.UiSettings
-import slop.miho.chumpy.data.WallpaperPalette
 import java.io.File
 
 /**
@@ -65,20 +64,16 @@ fun ChumpyTheme(
         ThemeMode.DARK, ThemeMode.AMOLED -> true
     }
     val context = LocalContext.current
-    // The wallpaper seed accents re-theme with the picture; the flow seeds itself on first
-    // read, so the palette is ready wherever the theme is first composed.
-    val monetHues by WallpaperPalette.hues(context).collectAsStateWithLifecycle()
     val motion = scaledMotionScheme(settings.slowAnimations)
     // Only the rainbow accent runs the clock; every other accent leaves it at rest.
     val rainbowHue = if (settings.accent == Accent.RAINBOW) rainbowHue() else 0f
-    val colorScheme = themeColorScheme(settings, monetHues, rainbowHue, darkTheme, context)
+    val colorScheme = themeColorScheme(settings, rainbowHue, darkTheme, context)
     CompositionLocalProvider(
         slop.miho.chumpy.ui.components.LocalInputMode provides
             ((context as? slop.miho.chumpy.ui.components.ControllerActivity)?.controllerMode?.value
                 ?: slop.miho.chumpy.ui.components.InputMode.TOUCH),
         LocalUiSettings provides settings,
         LocalDarkTheme provides darkTheme,
-        LocalRainbowHue provides rainbowHue,
     ) {
         MaterialExpressiveTheme(
             colorScheme = colorScheme,
@@ -89,23 +84,6 @@ fun ChumpyTheme(
         )
     }
 }
-
-/**
- * The color scheme the app would wear in the given theme with the active accent — the
- * reference for anything that must read over a dimmed wallpaper regardless of the theme the
- * user is in: bare-on-wallpaper text picks the dark scheme's roles, and both scrim tones
- * are the schemes' own surfaces — never a flat black or white.
- */
-@Composable
-fun backdropScheme(darkTheme: Boolean): ColorScheme {
-    val settings = LocalUiSettings.current
-    val context = LocalContext.current
-    val monetHues by WallpaperPalette.hues(context).collectAsStateWithLifecycle()
-    return themeColorScheme(settings, monetHues, LocalRainbowHue.current, darkTheme, context)
-}
-
-/** The rainbow accent's current hue, provided by [ChumpyTheme] for [backdropScheme]. */
-private val LocalRainbowHue = staticCompositionLocalOf { 0f }
 
 /** One full trip of the rainbow accent around the color wheel. */
 private const val RAINBOW_CYCLE_MS = 12_000
@@ -134,7 +112,6 @@ private fun rainbowHue(): Float {
  */
 private fun themeColorScheme(
     settings: UiSettings,
-    monetHues: List<Float>?,
     rainbowHue: Float,
     darkTheme: Boolean,
     context: Context,
@@ -148,7 +125,7 @@ private fun themeColorScheme(
         settings.accent == Accent.CUSTOM ->
             (if (darkTheme) darkColorScheme() else lightColorScheme())
                 .withSeed(settings.customAccent)
-        else -> accentColorScheme(settings.accent, monetHues, darkTheme)
+        else -> accentColorScheme(settings.accent, darkTheme)
     }
     return if (darkTheme && settings.themeMode == ThemeMode.AMOLED) scheme.amoled() else scheme
 }
@@ -157,12 +134,10 @@ private fun themeColorScheme(
  * The "themed" icon's art color, resolved outside composition — the QS tile lives in the
  * ":core" process, where there is no UI to theme, and still paints itself with the app's
  * own accent. Always the dark scheme's primary: the tile sits on the dark shade either way.
- * Wallpaper-seeded accents fall back to the sky hue — the palette itself is UI machinery.
  */
 fun themedIconColor(context: Context, settings: UiSettings): Int =
     themeColorScheme(
         settings = settings,
-        monetHues = null,
         rainbowHue = Accent.SKY.hue,
         darkTheme = true,
         context = context,
@@ -213,12 +188,8 @@ private fun appFontFamily(fontId: String): FontFamily? {
  * wallpaper seeds take their hue from [monetHues]; without a wallpaper behind them — or on
  * devices without Material You — the sky scheme is the default.
  */
-private fun accentColorScheme(accent: Accent, monetHues: List<Float>?, darkTheme: Boolean): ColorScheme {
-    val hue = when {
-        accent == Accent.ADAPTIVE -> Accent.SKY.hue
-        accent.fromWallpaper -> monetHues?.getOrNull(accent.seedIndex) ?: Accent.SKY.hue
-        else -> accent.hue
-    }
+private fun accentColorScheme(accent: Accent, darkTheme: Boolean): ColorScheme {
+    val hue = if (accent == Accent.ADAPTIVE) Accent.SKY.hue else accent.hue
     val base = if (darkTheme) darkColorScheme() else lightColorScheme()
     return base.withHue(hue)
 }

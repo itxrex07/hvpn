@@ -1,6 +1,5 @@
 package slop.miho.chumpy.ui.expressive
 
-import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -84,7 +83,6 @@ import slop.miho.chumpy.ui.MainViewModel
 import slop.miho.chumpy.ui.ServersUiState
 import slop.miho.chumpy.ui.StatsUiState
 import slop.miho.chumpy.ui.UpdateUiState
-import slop.miho.chumpy.ui.wallpapers.WallpaperActivity
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -368,10 +366,8 @@ fun SarhadMainShell(
     var activeTab by rememberSaveable { mutableStateOf(SarhadTab.HOME) }
 
     var showImportModal by remember { mutableStateOf(false) }
-    var showLauncherIconModal by remember { mutableStateOf(false) }
     var showDnsModal by remember { mutableStateOf(false) }
     var showFragmentModal by remember { mutableStateOf(false) }
-    var showStyleModal by remember { mutableStateOf(false) }
     var showHappSpoofModal by remember { mutableStateOf(false) }
     var showDelayTestModal by remember { mutableStateOf(false) }
     var showLogsModal by remember { mutableStateOf(false) }
@@ -419,7 +415,6 @@ fun SarhadMainShell(
         ) {
             if (activeTab == SarhadTab.HOME) {
                 SarhadTopHeader(
-                    onOpenAppearance = { showStyleModal = true },
                     onOpenLogs = { showLogsModal = true },
                 )
             }
@@ -471,7 +466,6 @@ fun SarhadMainShell(
                             home = home,
                             stats = stats,
                             settings = settings,
-                            connectionSettings = connectionSettings,
                             selectedProfile = selectedProfile,
                             updateState = updateState,
                             onToggleConnect = {
@@ -484,10 +478,6 @@ fun SarhadMainShell(
                                 }
                             },
                             onOpenServers = { activeTab = SarhadTab.SERVERS },
-                            onRefreshPing = { viewModel.refreshPing(showPending = true) },
-                            onPingSelected = { viewModel.pingSelected() },
-                            onOpenLogs = { showLogsModal = true },
-                            onOpenDns = { showDnsModal = true },
                             onUpdateChipTap = { viewModel.onUpdateChipTap() },
                         )
 
@@ -559,11 +549,9 @@ fun SarhadMainShell(
                             updateState = updateState,
                             onUpdateSettings = { transform -> viewModel.updateSettings(transform) },
                             onUpdateConnection = { transform -> viewModel.updateConnection(transform) },
-                            onOpenLauncherIconModal = { showLauncherIconModal = true },
                             onOpenDnsModal = { showDnsModal = true },
                             onOpenFragmentModal = { showFragmentModal = true },
                             onOpenPerAppProxy = onOpenPerAppProxy,
-                            onOpenStyleModal = { showStyleModal = true },
                             onOpenHappSpoofModal = { showHappSpoofModal = true },
                             onOpenDelayTestModal = { showDelayTestModal = true },
                             onOpenLogsModal = { showLogsModal = true },
@@ -599,16 +587,6 @@ fun SarhadMainShell(
             )
         }
 
-        if (showLauncherIconModal) {
-            KiranLauncherIconModal(
-                currentVariant = settings.iconVariant,
-                onSelectVariant = { variant ->
-                    viewModel.updateSettings { it.copy(iconVariant = variant) }
-                },
-                onDismiss = { showLauncherIconModal = false },
-            )
-        }
-
         if (showDnsModal) {
             DnsPickerModal(
                 isStyleB = true,
@@ -626,15 +604,6 @@ fun SarhadMainShell(
                 connectionSettings = connectionSettings,
                 onUpdateConnection = { transform -> viewModel.updateConnection(transform) },
                 onDismiss = { showFragmentModal = false },
-            )
-        }
-
-        if (showStyleModal) {
-            AppearanceStyleModal(
-                settings = settings,
-                onUpdateSettings = { transform -> viewModel.updateSettings(transform) },
-                onOpenLauncherShowcase = { showLauncherIconModal = true },
-                onDismiss = { showStyleModal = false },
             )
         }
 
@@ -763,7 +732,6 @@ fun SarhadMainShell(
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun SarhadTopHeader(
-    onOpenAppearance: () -> Unit,
     onOpenLogs: () -> Unit,
 ) {
     Row(
@@ -800,43 +768,21 @@ private fun SarhadTopHeader(
             )
         }
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(SarhadColors.PillBg)
+                .clickable(onClick = onOpenLogs)
+                .testTag("sarhad_logs_button"),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(SarhadColors.PillBg)
-                    .clickable(onClick = onOpenAppearance)
-                    .testTag("sarhad_style_button"),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_appearance),
-                    contentDescription = "Appearance & Launcher",
-                    tint = SarhadColors.PrimaryLight,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(SarhadColors.PillBg)
-                    .clickable(onClick = onOpenLogs)
-                    .testTag("sarhad_logs_button"),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_info),
-                    contentDescription = "Core Logs",
-                    tint = SarhadColors.TextPrimary,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
+            Icon(
+                painter = painterResource(R.drawable.ic_info),
+                contentDescription = "Core Logs",
+                tint = SarhadColors.TextPrimary,
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }
@@ -850,15 +796,10 @@ private fun SarhadHomeTab(
     home: HomeUiState,
     stats: StatsUiState,
     settings: UiSettings,
-    connectionSettings: ConnectionSettings,
     selectedProfile: ProfileEntity?,
     updateState: UpdateUiState,
     onToggleConnect: () -> Unit,
     onOpenServers: () -> Unit,
-    onRefreshPing: () -> Unit,
-    onPingSelected: () -> Unit,
-    onOpenLogs: () -> Unit,
-    onOpenDns: () -> Unit,
     onUpdateChipTap: () -> Unit,
 ) {
     val isConnected = tunnelStatus.state == TunnelState.UP
@@ -963,38 +904,6 @@ private fun SarhadHomeTab(
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
                             color = SarhadColors.Pink,
-                        )
-                    }
-
-                    Spacer(Modifier.height(14.dp))
-
-                    // Hero Detail Strip
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        SarhadHeroActionTile(
-                            label = if (isConnected) "Live ping" else "Test delay",
-                            value = (home.pingMillis ?: selectedProfile?.testDelayMillis)
-                                ?.takeIf { it > 0 }
-                                ?.let { "$it ms" } ?: "Tap to ping",
-                            isConnected = isConnected,
-                            modifier = Modifier.weight(1f),
-                            onClick = { if (isConnected) onRefreshPing() else onPingSelected() },
-                        )
-                        SarhadHeroActionTile(
-                            label = "DNS",
-                            value = connectionSettings.dnsProvider,
-                            isConnected = isConnected,
-                            modifier = Modifier.weight(1f),
-                            onClick = onOpenDns,
-                        )
-                        SarhadHeroActionTile(
-                            label = "Diagnostics",
-                            value = "Core Logs ›",
-                            isConnected = isConnected,
-                            modifier = Modifier.weight(1f),
-                            onClick = onOpenLogs,
                         )
                     }
                 }
@@ -1144,64 +1053,32 @@ private fun SarhadHomeTab(
             }
         }
 
-        // Live Speed & Session Totals Row
+        // Live Speed & Session Totals Row (shown only when connected)
         item {
-            val (downVal, downUnit) = formatSpeedMbps(stats.liveDownBps)
-            val (upVal, upUnit) = formatSpeedMbps(stats.liveUpBps)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                SarhadMetricTile(
-                    label = "Download",
-                    value = "$downVal $downUnit",
-                    sub = "Session ↓ ${formatCompactBytes(stats.rxTotal)}",
-                    accent = SarhadColors.Green,
-                    modifier = Modifier.weight(1f),
-                )
-                SarhadMetricTile(
-                    label = "Upload",
-                    value = "$upVal $upUnit",
-                    sub = "Session ↑ ${formatCompactBytes(stats.txTotal)}",
-                    accent = SarhadColors.Pink,
-                    modifier = Modifier.weight(1f),
-                )
+            AnimatedVisibility(visible = isConnected) {
+                val (downVal, downUnit) = formatSpeedMbps(stats.liveDownBps)
+                val (upVal, upUnit) = formatSpeedMbps(stats.liveUpBps)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    SarhadMetricTile(
+                        label = "Download",
+                        value = "$downVal $downUnit",
+                        sub = "Session ↓ ${formatCompactBytes(stats.rxTotal)}",
+                        accent = SarhadColors.Green,
+                        modifier = Modifier.weight(1f),
+                    )
+                    SarhadMetricTile(
+                        label = "Upload",
+                        value = "$upVal $upUnit",
+                        sub = "Session ↑ ${formatCompactBytes(stats.txTotal)}",
+                        accent = SarhadColors.Pink,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
-    }
-}
-
-@Composable
-private fun SarhadHeroActionTile(
-    label: String,
-    value: String,
-    isConnected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(18.dp))
-            .background(if (isConnected) SarhadColors.DetailTile else SarhadColors.PillBg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-    ) {
-        Text(
-            text = label,
-            fontFamily = OutfitFont,
-            fontSize = 11.sp,
-            color = if (isConnected) SarhadColors.DetailText else SarhadColors.TextMuted,
-        )
-        Spacer(Modifier.height(2.dp))
-        Text(
-            text = value,
-            fontFamily = OutfitFont,
-            fontWeight = FontWeight.Bold,
-            fontSize = 12.sp,
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 
